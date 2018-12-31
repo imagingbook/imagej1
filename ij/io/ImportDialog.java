@@ -9,8 +9,7 @@ import ij.gui.*;
 import ij.process.*;
 import ij.util.*;
 import ij.plugin.frame.Recorder;
-import ij.plugin.FolderOpener;
-import ij.plugin.FileInfoVirtualStack;
+import ij.plugin.*;
 import ij.measure.Calibration;
 
 
@@ -57,7 +56,7 @@ public class ImportDialog {
 		"24-bit RGB Planar", "24-bit BGR", "24-bit Integer", "32-bit ARGB", "32-bit ABGR", "1-bit Bitmap"};
     	
     static {
-    	options = Prefs.getInt(OPTIONS,0);
+    	options = Prefs.getInt(OPTIONS, 0);
     	sWhiteIsZero = (options&WHITE_IS_ZERO)!=0;
     	sIntelByteOrder = (options&INTEL_BYTE_ORDER)!=0;
     }
@@ -172,6 +171,7 @@ public class ImportDialog {
 				IJ.showStatus((stack.getSize()+1) + ": " + list[i]);
 			}
 		}
+		Recorder.recordCall(fi.getCode()+"imp = Raw.openAll(\""+ fi.directory+"\", fi);");
 		if (stack!=null) {
 			imp = new ImagePlus("Imported Stack", stack);
 			if (imp.getBitDepth()==16 || imp.getBitDepth()==32)
@@ -187,11 +187,17 @@ public class ImportDialog {
 		Does nothing if the dialog is canceled. */
 	public void openImage() {
 		FileInfo fi = getFileInfo();
-		if (fi==null) return;
+		if (fi==null)
+			return;
 		if (openAll) {
 			if (virtual) {
-				virtual = false;
-				IJ.error("Import Raw", "\"Open All\" does not currently support virtual stacks");
+				ImagePlus imp = Raw.openAllVirtual(directory, fi);
+				Recorder.recordCall(fi.getCode()+"imp = Raw.openAllVirtual(\""+directory+"\", fi);");
+				if (imp!=null) {
+					imp.setSlice(imp.getStackSize()/2);
+					imp.show();
+					imp.setSlice(1);
+				}
 				return;
 			}
 			String[] list = new File(directory).list();
@@ -202,6 +208,8 @@ public class ImportDialog {
 		else {
 			FileOpener fo = new FileOpener(fi);
 			ImagePlus imp = fo.openImage();
+			String filePath = fi.directory+fi.fileName;
+			Recorder.recordCall(fi.getCode()+"imp = Raw.open(\""+filePath+"\", fi);");
 			if (imp!=null) {
 				imp.show();
 				int n = imp.getStackSize();
@@ -211,7 +219,8 @@ public class ImportDialog {
 					ip.resetMinAndMax();
 					imp.setDisplayRange(ip.getMin(),ip.getMax());
 				}
-			}
+			} else
+				IJ.error("File>Import>Raw", "File not found: "+filePath);
 		}
 	}
 
@@ -225,6 +234,8 @@ public class ImportDialog {
 		FileInfo fi = new FileInfo();
 		fi.fileFormat = fi.RAW;
 		fi.fileName = fileName;
+		if (!(directory.endsWith(File.separator)||directory.endsWith("/")))
+			directory += "/";
 		fi.directory = directory;
 		fi.width = width;
 		fi.height = height;
@@ -292,7 +303,7 @@ public class ImportDialog {
 	public static FileInfo getLastFileInfo() {
 		return lastFileInfo;
 	}
-	
+		
 	private void getDimensionsFromName(String name) {
 		if (name==null) return;
 		int lastUnderscore = name.lastIndexOf("_");
@@ -305,39 +316,39 @@ public class ImportDialog {
 		name2 = new String(chars);
 		String[] numbers = Tools.split(name2);
 		int n = numbers.length;
-		if (n<2 || n>3) return;
+		if (n<2) return;
 		int w = (int)Tools.parseDouble(numbers[0],0);
-		if (w<10) return;
+		if (w<1) return;
 		int h = (int)Tools.parseDouble(numbers[1],0);
-		if (h<10) return;
+		if (h<1) return;
 		width = w;
 		height = h;
 		nImages = 1;
-		if (n==3) {
+		if (n>2) {
 			int d = (int)Tools.parseDouble(numbers[2],0);
 			if (d>0)
 				nImages = d;
 		}
 		guessFormat(directory, name);
 	}
-
+    
 	private void guessFormat(String dir, String name) {
 		if (dir==null) return;
 		File file = new File(dir+name);
 		long imageSize = (long)width*height*nImages;
 		long fileSize = file.length();
-		if (fileSize==4*imageSize) {
+		if (fileSize==4*imageSize)
 			choiceSelection = 5; // 32-bit real
-			intelByteOrder = true;
-		} else if (fileSize==2*imageSize) {
+		else if (fileSize==2*imageSize)
 			choiceSelection = 2;	// 16-bit unsigned
-			intelByteOrder = true;
-		} else if (fileSize==3*imageSize) {
+		else if (fileSize==3*imageSize)
 			choiceSelection = 7;	// 24-bit RGB
-		} else if (fileSize==imageSize)
+		else if (fileSize==imageSize)
 			choiceSelection = 0;	// 8-bit
-		if (name.endsWith("be.raw"))
+		if (name.endsWith("be.raw"))  // big-endian
 			intelByteOrder = false;
+		else if (name.endsWith("le.raw"))  // little-endian
+			intelByteOrder = true;
 	}
 	
 }

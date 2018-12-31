@@ -224,7 +224,7 @@ public class Selection implements PlugIn, Measurements {
 		int type = roi.getType();
 		boolean segmentedSelection = type==Roi.POLYGON||type==Roi.POLYLINE;
 		if (!(segmentedSelection||type==Roi.FREEROI||type==Roi.TRACED_ROI||type==Roi.FREELINE))
-			{IJ.error("Spline", "Polygon or polyline selection required"); return;}
+			{IJ.error("Spline Fit", "Polygon or polyline selection required"); return;}
 		if (roi instanceof EllipseRoi)
 			return;
 		PolygonRoi p = (PolygonRoi)roi;
@@ -527,26 +527,31 @@ public class Selection implements PlugIn, Measurements {
 		Prefs.useInvertingLut = false;
 		boolean selectAll = roi!=null && roi.getType()==Roi.RECTANGLE && roi.getBounds().width==imp.getWidth()
 			&& roi.getBounds().height==imp.getHeight() && imp.isThreshold();
-		if (roi==null || !(roi.isArea()||roi.getType()==Roi.POINT) || selectAll) {
+		boolean overlay = imp.getOverlay()!=null && imp.getProcessor().getMinThreshold()==ImageProcessor.NO_THRESHOLD;
+		if (!overlay && (roi==null || selectAll)) {
 			createMaskFromThreshold(imp);
 			Prefs.useInvertingLut = useInvertingLut;
 			return;
 		}
+		if (roi==null && imp.getOverlay()==null) {
+			IJ.error("Create Mask", "Selection, overlay or threshold required");
+			return;
+		}
+		ByteProcessor mask = imp.createRoiMask();
+		if (!Prefs.blackBackground)
+			mask.invertLut();
 		ImagePlus maskImp = null;
 		Frame frame = WindowManager.getFrame("Mask");
 		if (frame!=null && (frame instanceof ImageWindow))
 			maskImp = ((ImageWindow)frame).getImagePlus();
-		if (maskImp==null) {
-			ImageProcessor ip = new ByteProcessor(imp.getWidth(), imp.getHeight());
-			if (!Prefs.blackBackground)
-				ip.invertLut();
-			maskImp = new ImagePlus("Mask", ip);
+		if (maskImp!=null && maskImp.getBitDepth()==8) {
+			ImageProcessor ip = maskImp.getProcessor();
+			ip.copyBits(mask, 0, 0, Blitter.OR);
+			maskImp.setProcessor(ip);
+		} else {
+			maskImp = new ImagePlus("Mask", mask);
 			maskImp.show();
 		}
-		ImageProcessor ip = maskImp.getProcessor();
-		ip.setRoi(roi);
-		ip.setValue(255);
-		ip.fill(ip.getMask());
 		Calibration cal = imp.getCalibration();
 		if (cal.scaled()) {
 			Calibration cal2 = maskImp.getCalibration();
@@ -556,19 +561,20 @@ public class Selection implements PlugIn, Measurements {
 		}
 		maskImp.updateAndRepaintWindow();
 		Prefs.useInvertingLut = useInvertingLut;
+		Recorder.recordCall("mask = imp.createRoiMask();");
 	}
 	
 	void createMaskFromThreshold(ImagePlus imp) {
 		ImageProcessor ip = imp.getProcessor();
-		if (ip.getMinThreshold()==ImageProcessor.NO_THRESHOLD)
-			{IJ.error("Create Mask", "Area selection or thresholded image required"); return;}
-		double t1 = ip.getMinThreshold();
-		double t2 = ip.getMaxThreshold();
-		IJ.run("Duplicate...", "title=mask");
-		ImagePlus imp2 = WindowManager.getCurrentImage();
-		ImageProcessor ip2 = imp2.getProcessor();
-		ip2.setThreshold(t1, t2, ip2.getLutUpdateMode());
-		IJ.run("Convert to Mask");
+		if (ip.getMinThreshold()==ImageProcessor.NO_THRESHOLD) {
+			IJ.error("Create Mask", "Area selection, overlay or thresholded image required");
+			return;
+		}
+		ByteProcessor mask = imp.createThresholdMask();
+		if (!Prefs.blackBackground)
+			mask.invertLut();
+		new ImagePlus("mask",mask).show();
+		Recorder.recordCall("mask = imp.createThresholdMask();");
 	}
 
 	void createSelectionFromMask(ImagePlus imp) {
@@ -629,8 +635,8 @@ public class Selection implements PlugIn, Measurements {
 		} else {
 			roi = (Roi)roi.clone();
 			int lwidth = (int)roi.getStrokeWidth();
-			if (lwidth<5)
-				lwidth = 5;
+			if (lwidth<1)
+				lwidth = 1;
 			Rectangle bounds = roi.getBounds();
 			int width = bounds.width + lwidth*2;
 			int height = bounds.height + lwidth*2;

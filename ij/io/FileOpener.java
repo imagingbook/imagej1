@@ -66,7 +66,7 @@ public class FileOpener {
 		
 		ColorModel cm = createColorModel(fi);
 		if (fi.nImages>1)
-			{return openStack(cm, show);}
+			return openStack(cm, show);
 		switch (fi.fileType) {
 			case FileInfo.GRAY8:
 			case FileInfo.COLOR8:
@@ -156,6 +156,10 @@ public class FileOpener {
 			imp.setProperty("Info", fi.info);
 		if (fi.sliceLabels!=null&&fi.sliceLabels.length==1&&fi.sliceLabels[0]!=null)
 			imp.setProperty("Label", fi.sliceLabels[0]);
+		if (fi.plot!=null) try {
+			Plot plot = new Plot(imp, new ByteArrayInputStream(fi.plot));
+			imp.setProperty(Plot.PROPERTY_KEY, plot);
+		} catch (Exception e) { IJ.handleException(e); }
 		if (fi.roi!=null)
 			imp.setRoi(RoiDecoder.openFromByteArray(fi.roi));
 		if (fi.overlay!=null)
@@ -177,7 +181,7 @@ public class FileOpener {
 				overlay.drawNames(proto.getDrawNames());
 				overlay.drawBackgrounds(proto.getDrawBackgrounds());
 				overlay.setLabelColor(proto.getLabelColor());
-				overlay.setLabelFont(proto.getLabelFont());
+				overlay.setLabelFont(proto.getLabelFont(), proto.scalableLabels());
 			}
 			overlay.add(roi);
 		}
@@ -192,7 +196,8 @@ public class FileOpener {
 		try {
 			ImageReader reader = new ImageReader(fi);
 			InputStream is = createInputStream(fi);
-			if (is==null) return null;
+			if (is==null)
+				return null;
 			IJ.resetEscape();
 			for (int i=1; i<=fi.nImages; i++) {
 				if (!silentMode)
@@ -204,7 +209,8 @@ public class FileOpener {
 					return null;
 				}
 				pixels = reader.readPixels(is, skip);
-				if (pixels==null) break;
+				if (pixels==null)
+					break;
 				stack.addSlice(null, pixels);
 				skip = fi.gapBetweenImages;
 				if (!silentMode)
@@ -240,7 +246,6 @@ public class FileOpener {
 		if (ip.getMin()==ip.getMax())  // find stack min and max if first slice is blank
 			setStackDisplayRange(imp);
 		if (!silentMode) IJ.showProgress(1.0);
-		//silentMode = false;
 		return imp;
 	}
 
@@ -327,7 +332,7 @@ public class FileOpener {
 		Calibration cal = imp.getCalibration();
 		boolean calibrated = false;
 		if (fi.pixelWidth>0.0 && fi.unit!=null) {
-			if (fi.pixelWidth<=0.0001 && fi.unit.equals("cm")) {
+			if (Prefs.convertToMicrons && fi.pixelWidth<=0.0001 && fi.unit.equals("cm")) {
 				fi.pixelWidth *= 10000.0;
 				fi.pixelHeight *= 10000.0;
 				if (fi.pixelDepth!=1.0)
@@ -457,7 +462,7 @@ public class FileOpener {
 				is = new FileInputStream(f);
 		}
 		if (is!=null) {
-		    if (fi.compression>=FileInfo.LZW)
+			if (fi.compression>=FileInfo.LZW)
 				is = new RandomAccessStream(is);
 			else if (gzip)
 				is = new GZIPInputStream(is, 50000);

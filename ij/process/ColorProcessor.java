@@ -8,7 +8,7 @@ import ij.ImageStack;
 
 /**
 This is an 32-bit RGB image and methods that operate on that image.. Based on the ImageProcessor class from
-"KickAss Java Programming" by Tonny Espeset (http://www.sn.no/~espeset).
+"KickAss Java Programming" by Tonny Espeset (1996).
 */
 public class ColorProcessor extends ImageProcessor {
 
@@ -62,19 +62,7 @@ public class ColorProcessor extends ImageProcessor {
 	}
 	
 	public Image createImage() {
-		if (ij.IJ.isJava16())
-			return createBufferedImage();
-		if (source==null) {
-			source = new MemoryImageSource(width, height, cm, pixels, 0, width);
-			source.setAnimated(true);
-			source.setFullBufferUpdates(true);
-			img = Toolkit.getDefaultToolkit().createImage(source);
-		} else if (newPixels) {
-			source.newPixels(pixels, cm, 0, width);
-			newPixels = false;
-		} else
-			source.newPixels();
-		return img;
+		return createBufferedImage();
 	}
 
 	Image createBufferedImage() {
@@ -101,8 +89,6 @@ public class ColorProcessor extends ImageProcessor {
 		if (cm!=null && (cm instanceof IndexColorModel))
 			throw new IllegalArgumentException("DirectColorModel required");
 		this.cm = cm;
-		newPixels = true;
-		source = null;
 		rgbSampleModel = null;
 		rgbRaster = null;
 	}
@@ -769,9 +755,9 @@ public class ColorProcessor extends ImageProcessor {
 		return null;
 	}
 
-   public void noise(double range) {
-    	filterRGB(RGB_NOISE, range);
-    }
+	public void noise(double range) {
+		filterRGB(RGB_NOISE, range);
+	}
 
 	public void medianFilter() {
     	filterRGB(RGB_MEDIAN, 0.0);
@@ -1264,6 +1250,14 @@ public class ColorProcessor extends ImageProcessor {
 		return histogram;
 	}
 
+	public synchronized boolean weightedHistogram() {
+		if (weights!=null && (weights[0]!=1d/3d||weights[1]!=1d/3d||weights[2]!=1d/3d))
+			return true;
+		if (rWeight!=1d/3d || gWeight!=1d/3d || bWeight!=1d/3d)
+			return true;
+		return false;
+	}
+
 	/** Performs a convolution operation using the specified kernel. */
 	public void convolve(float[] kernel, int kernelWidth, int kernelHeight) {
 		int size = width*height;
@@ -1315,7 +1309,7 @@ public class ColorProcessor extends ImageProcessor {
 		weights[2] = bWeight;
 		return weights;
 	}
-
+	
 	/** This is a thread-safe (non-static) version of setWeightingFactors(). */
 	public void setRGBWeights(double rweight, double gweight, double bweight) {
 		weights = new double[3];
@@ -1324,6 +1318,11 @@ public class ColorProcessor extends ImageProcessor {
 		weights[2] = bweight;
 	}
 
+	/** This is a thread-safe (non-static) version of setWeightingFactors(). */
+	public void setRGBWeights(double[] weights) {
+		this.weights = weights;
+	}
+	
 	/** Returns the values set by setRGBWeights(), or null if setRGBWeights() has not been called. */
 	public double[] getRGBWeights() {
 		return weights;

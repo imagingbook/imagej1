@@ -5,6 +5,7 @@ import ij.gui.*;
 import ij.io.Opener;
 import ij.text.TextWindow;
 import ij.measure.ResultsTable;
+import ij.plugin.frame.Editor;
 import java.awt.Frame;
 
 /** This plugin implements the Plugins/Utilities/Unlock, Image/Rename
@@ -43,6 +44,14 @@ public class SimpleCommands implements PlugIn {
 			showMissingPluginsMessage();
 		else if (arg.equals("fonts"))
 			showFonts();
+		else if (arg.equals("opencp"))
+			openControlPanel();
+		else if (arg.equals("magic"))
+			installMagicMontageTools();
+		else if (arg.equals("measure"))
+			IJ.runMacroFile("ij.jar:MeasureStack", null);
+		else if (arg.equals("interactive"))
+			openInteractiveModeEditor();
 	}
 	
 	private synchronized void showFonts() {
@@ -160,13 +169,12 @@ public class SimpleCommands implements PlugIn {
 		ImagePlus imp = IJ.getImage();
 		ImageProcessor ip = imp.getProcessor();
 		ResultsTable rt = ResultsTable.createTableFromImage(ip);
-		rt.showRowNumbers(false);
 		rt.show("Results");
 	}
 	
 	private void resultsToImage() {
 		ResultsTable rt = ResultsTable.getResultsTable();
-		if (rt==null || rt.getCounter()==0) {
+		if (rt==null || rt.size()==0) {
 			IJ.error("Results to Image", "The Results table is empty");
 			return;
 		}
@@ -175,6 +183,12 @@ public class SimpleCommands implements PlugIn {
 		new ImagePlus("Results Table", ip).show();
 	}
 	
+	private void openControlPanel() {
+		Prefs.set("Control_Panel.@Main", "51 22 92 426");
+		Prefs.set("Control_Panel.Help.Examples", "144 107 261 373");
+		IJ.run("Control Panel...", "");
+	}
+
 	private void showMissingPluginsMessage() {
 		IJ.showMessage("Path Randomization", 
 			"Plugins were not loaded due to macOS Path Randomization.\n"+
@@ -182,6 +196,23 @@ public class SimpleCommands implements PlugIn {
 			"ImageJ folder and then copy it back. More information is at\n \n"+
 			IJ.URL+"/docs/install/osx.html#randomization");
 	}
-
+	
+	private void installMagicMontageTools() {
+		String name = "MagicMontageTools.txt";
+		String path = "/macros/"+name;
+		MacroInstaller mi = new MacroInstaller();
+		if (IJ.shiftKeyDown())
+			 Toolbar.showCode(name, mi.openFromIJJar(path));
+		else
+			try {
+				mi.installFromIJJar(path);
+			} catch (Exception e) {}
+	}
+	
+	private void openInteractiveModeEditor() {
+		Editor ed = new Editor();
+		ed.setSize(600, 500);
+		ed.create(Editor.INTERACTIVE_NAME, "");
+	}
 		
 }

@@ -11,17 +11,19 @@ import java.awt.*;
 import java.awt.image.*;
 import java.awt.event.KeyEvent;
 import java.util.*;
-import java.awt.geom.Point2D;
+import java.awt.geom.*;
 
-/** This class represents a collection of points. */
+/** This class represents a collection of points that can be associated with counters.
+ * @see <a href="http://wsr.imagej.net/macros/js/PointProperties.js">PointProperties.js</a>
+*/
 public class PointRoi extends PolygonRoi {
 	public static final String[] sizes = {"Tiny", "Small", "Medium", "Large", "Extra Large"};
-	public static final String[] types = {"Hybrid", "Crosshair", "Dot", "Circle"};
+	public static final String[] types = {"Hybrid", "Cross", "Dot", "Circle"};
 	private static final String TYPE_KEY = "point.type";
 	private static final String SIZE_KEY = "point.size";
 	private static final String CROSS_COLOR_KEY = "point.cross.color";
 	private static final int TINY=1, SMALL=3, MEDIUM=5, LARGE=7, EXTRA_LARGE=11;
-	private static final int HYBRID=0, CROSSHAIR=1, DOT=2, CIRCLE=3;
+	private static final int HYBRID=0, CROSS=1, CROSSHAIR=1, DOT=2, CIRCLE=3;
 	private static final BasicStroke twoPixelsWide = new BasicStroke(2);
 	private static final BasicStroke threePixelsWide = new BasicStroke(3);
 	private static int defaultType = HYBRID;
@@ -43,12 +45,20 @@ public class PointRoi extends PolygonRoi {
 	private int[] counts = new int[MAX_COUNTERS];
 	private ResultsTable rt;
 	private long lastPointTime;
-	private double scale;
 	private int[] counterInfo;
-	
+	private boolean promptBeforeDeleting;
+	private boolean promptBeforeDeletingCalled;
+	private int nMarkers;
+	private boolean addToOverlay;
+		
 	static {
 		setDefaultType((int)Prefs.get(TYPE_KEY, HYBRID));
 		setDefaultSize((int)Prefs.get(SIZE_KEY, 1));
+	}
+	
+	public PointRoi() {
+		this(0.0, 0.0);
+		deletePoint(0);
 	}
 	
 	/** Creates a new PointRoi using the specified int arrays of offscreen coordinates. */
@@ -68,6 +78,12 @@ public class PointRoi extends PolygonRoi {
 		this(ox, oy, ox.length);
 	}
 
+	/** Creates a new PointRoi using the specified coordinate arrays and options. */
+	public PointRoi(float[] ox, float[] oy, String options) {
+		this(ox, oy, ox.length);
+		setOptions(options);
+	}
+
 	/** Creates a new PointRoi from a FloatPolygon. */
 	public PointRoi(FloatPolygon poly) {
 		this(poly.xpoints, poly.ypoints, poly.npoints);
@@ -78,16 +94,26 @@ public class PointRoi extends PolygonRoi {
 		this(itof(poly.xpoints), itof(poly.ypoints), poly.npoints);
 	}
 
+	/** Creates a new PointRoi using the specified coordinates and options. */
+	public PointRoi(double ox, double oy, String options) {
+		super(makeXArray(ox, null), makeYArray(oy, null), 1, POINT);
+		width=1; height=1;
+		incrementCounter(null);
+		setOptions(options);
+	}
+
 	/** Creates a new PointRoi using the specified offscreen int coordinates. */
 	public PointRoi(int ox, int oy) {
 		super(makeXArray(ox, null), makeYArray(oy, null), 1, POINT);
 		width=1; height=1;
+		incrementCounter(null);
 	}
 
 	/** Creates a new PointRoi using the specified offscreen double coordinates. */
 	public PointRoi(double ox, double oy) {
 		super(makeXArray(ox, null), makeYArray(oy, null), 1, POINT);
 		width=1; height=1;
+		incrementCounter(null);
 	}
 
 	/** Creates a new PointRoi using the specified screen coordinates. */
@@ -109,8 +135,29 @@ public class PointRoi extends PolygonRoi {
 		setCounter(Toolbar.getMultiPointMode()?defaultCounter:0);
 		incrementCounter(imp);
 		enlargeArrays(50);
-		if (Recorder.record && !Recorder.scriptMode()) 
-			Recorder.record("makePoint", x, y);
+		if (Recorder.record) {
+			String add = Prefs.pointAddToOverlay?" add":"";
+			String options = sizes[convertSizeToIndex(size)]+" "+Colors.colorToString(getColor())+" "+types[type]+add;
+			options = options.toLowerCase();		
+			if (Recorder.scriptMode())
+				Recorder.recordCall("imp.setRoi(new PointRoi("+x+","+y+",\""+options+"\"));");
+			else
+				Recorder.record("makePoint", x, y, options);
+		}
+	}
+	
+	private void setOptions(String options) {
+		if (options==null)
+			return;
+		if (options.contains("tiny")) size=TINY;
+		else if (options.contains("medium")) size=MEDIUM;
+		else if (options.contains("extra")) size=EXTRA_LARGE;
+		else if (options.contains("large")) size=LARGE;
+		if (options.contains("cross")) type=CROSS;
+		else if (options.contains("dot")) type=DOT;
+		else if (options.contains("circle")) type=CIRCLE;
+		setStrokeColor(Colors.getColor(options,Roi.getColor()));
+		addToOverlay =  options.contains("add");
 	}
 	
 	static float[] itof(int[] arr) {
@@ -136,7 +183,6 @@ public class PointRoi extends PolygonRoi {
 	}
 				
 	void handleMouseMove(int ox, int oy) {
-		//IJ.log("handleMouseMove");
 	}
 	
 	protected void handleMouseUp(int sx, int sy) {
@@ -147,27 +193,27 @@ public class PointRoi extends PolygonRoi {
 	/** Draws the points on the image. */
 	public void draw(Graphics g) {
 		updatePolygon();
-		//scale = ic!=null?ic.getMagnification():1.0;
-		//if (type!=CIRCLE) scale=1.0;
-		scale = 1.0;
 		if (showLabels && nPoints>1) {
 			fontSize = 8;
 			fontSize += convertSizeToIndex(size);
 			if (fontSize>18)
 				fontSize = 18;
-			double scale2 = 0.7*scale;
-			if (scale2<1.0) scale2=1.0;
-			fontSize = (int)Math.round(fontSize*scale2);
+			fontSize = (int)Math.round(fontSize);
 			font = new Font("SansSerif", Font.PLAIN, fontSize);
 			g.setFont(font);
 			if (fontSize>9)
 				Java2.setAntialiasedText(g, true);
 		}
-		int slice = imp!=null&&positions!=null&&imp.getStackSize()>1?imp.getCurrentSlice():0;
+		int slice = imp!=null&&positions!=null&&imp.getStackSize()>1?imp.getCurrentSlice():0;		
+		ImageCanvas ic = imp!=null?imp.getCanvas():null;
+		if (ic!=null && overlay && ic.getShowAllList()!=null && ic.getShowAllList().contains(this) && !Prefs.showAllSliceOnly)
+			slice = 0;  // draw point irrespective of currently selected slice
 		if (Prefs.showAllPoints)
 			slice = 0;
+		//IJ.log("draw: "+positions+" "+imp.getCurrentSlice());
 		for (int i=0; i<nPoints; i++) {
-			if (slice==0 || slice==positions[i])
+			//IJ.log(i+" "+slice+" "+(positions!=null?positions[i]:-1));
+			if (slice==0 || (positions!=null&&(slice==positions[i])||positions[i]==0))
 				drawPoint(g, xp2[i], yp2[i], i+1);
 		}
 		if (updateFullWindow) {
@@ -175,12 +221,20 @@ public class PointRoi extends PolygonRoi {
 			imp.draw();
 		}
 		PointToolOptions.update();
+		flattenScale = 1.0;
 	}
 
 	void drawPoint(Graphics g, int x, int y, int n) {
 		int size2=size/2;
 		boolean colorSet = false;
 		Graphics2D g2d = (Graphics2D)g;
+		AffineTransform saveXform = null;
+		if (flattenScale>1.0) {
+			saveXform = g2d.getTransform();
+			g2d.translate(x, y);
+			g2d.scale(flattenScale, flattenScale);
+			x = y = 0;
+		}
 		Color color = strokeColor!=null?strokeColor:ROIColor;
 		if (!overlay && isActiveOverlayRoi()) {
 			if (color==Color.cyan)
@@ -190,7 +244,7 @@ public class PointRoi extends PolygonRoi {
 		}
 		if (nCounters>1 && counters!=null && n<=counters.length)
 			color = getColor(counters[n-1]);
-		if (type==HYBRID || type==CROSSHAIR) {
+		if (type==HYBRID || type==CROSS) {
 			if (type==HYBRID)
 				g.setColor(Color.white);
 			else {
@@ -202,7 +256,7 @@ public class PointRoi extends PolygonRoi {
 			g.drawLine(x-(size+2), y, x+size+2, y);
 			g.drawLine(x, y-(size+2), x, y+size+2);
 		}
-		if (type!=CROSSHAIR && size>SMALL)
+		if (type!=CROSS && size>SMALL)
 			g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		if (type==HYBRID || type==DOT) { 
 			if (!colorSet) {
@@ -221,7 +275,7 @@ public class PointRoi extends PolygonRoi {
 				g.fillRect(x-size2, y-size2, size, size);
 		}
 		if (showLabels && nPoints>1) {
-			int offset = (int)Math.round(0.4*size*scale);
+			int offset = (int)Math.round(0.4);
 			if (offset<1) offset=1;
 			offset++;
 			if (nCounters==1) {
@@ -243,14 +297,14 @@ public class PointRoi extends PolygonRoi {
 				g.drawOval(x-(size2+1), y-(size2+1), size+1, size+1);
 		}
 		if (type==CIRCLE) {
-			int scaledSize = (int)Math.round((size+1)*scale);
+			int scaledSize = (int)Math.round(size+1);
 			g.setColor(color);
-			if (scale!=1.0)
-				g2d.setStroke(new BasicStroke((float)scale*(size>LARGE?2:1)));
-			else if (size>LARGE)
+			if (size>LARGE)
 				g2d.setStroke(twoPixelsWide);
 			g.drawOval(x-scaledSize/2, y-scaledSize/2, scaledSize, scaledSize);
 		}
+		if (saveXform!=null)
+			g2d.setTransform(saveXform);
 	}
 	
 	public void drawPixels(ImageProcessor ip) {
@@ -270,6 +324,12 @@ public class PointRoi extends PolygonRoi {
 		width+=1; height+=1;
 	}
 	
+
+	public void addUserPoint(ImagePlus imp, double ox, double oy) {
+		addPoint(imp, ox, oy);
+		nMarkers++;
+	}
+
 	private void addPoint2(ImagePlus imp, double ox, double oy) {
 		double xbase = getXBase();
 		double ybase = getYBase();
@@ -284,7 +344,7 @@ public class PointRoi extends PolygonRoi {
 	
 	/** Adds a point to this PointRoi. */
 	public PointRoi addPoint(double x, double y) {
-		addPoint(getImage(), x, y);
+		addPoint(null, x, y);
 		return this;
 	}
 
@@ -328,6 +388,44 @@ public class PointRoi extends PolygonRoi {
 			displayCounts();
 	}
 	
+	/** Returns the index of the current counter. */
+	public int getCounter() {
+		return counter;
+	}
+
+	/** Returns the count associated with the specified counter index.
+	 * @see #getLastCounter
+	 * @see <a href="http://wsr.imagej.net/macros/js/PointProperties.js">PointProperties.js</a>
+	 */
+	public int getCount(int counter) {
+		if (counter==0 && counters==null)
+			return nPoints;
+		else
+			return counts[counter];
+	}
+	
+	/** Returns the index of the last counter. */
+	public int getLastCounter() {
+		return nCounters - 1;
+	}
+
+	/** Returns the number of counters. */
+	public int getNCounters() {
+		int n = 0;
+		for (int counter=0; counter<nCounters; counter++) {
+			if (getCount(counter)>0) n++;
+		}
+		return n;
+	}
+	
+	/** Returns the counter assocated with the specified point. */
+	public int getCounter(int index) {
+		if (counters==null || index>=counters.length)
+			return 0;
+		else
+			return counters[index];
+	}
+
 	public void resetCounters() {
 		for (int i=0; i<counts.length; i++)
 			counts[i] = 0;
@@ -392,13 +490,13 @@ public class PointRoi extends PolygonRoi {
 		return defaultType;
 	}
 	
-	/** Sets the point type (0=hybrid, 1=crosshair, 2=dot, 3=circle). */
+	/** Sets the point type (0=hybrid, 1=cross, 2=dot, 3=circle). */
 	public void setPointType(int type) {
 		if (type>=0 && type<types.length)
 			this.type = type;
 	}
 
-	/** Returns the point type (0=hybrid, 1=crosshair, 2=dot, 3=circle). */
+	/** Returns the point type (0=hybrid, 1=cross, 2=dot, 3=circle). */
 	public int getPointType() {
 		return type;
 	}
@@ -451,15 +549,6 @@ public class PointRoi extends PolygonRoi {
 		return SMALL;
 	}
 
-	/** Deprecated */
-	public static void setDefaultCrossColor(Color color) {
-	}
-	
-	/** Deprecated */
-	public static Color getDefaultCrossColor() {
-		return null;
-	}
-
 	/** Always returns true. */
 	public boolean subPixelResolution() {
 		return true;
@@ -477,48 +566,36 @@ public class PointRoi extends PolygonRoi {
 		return null;
 	}
 
-	public String toString() {
-		if (nPoints>1)
-			return ("Roi[Points, count="+nPoints+"]");
-		else
-			return ("Roi[Point, x="+x+", y="+y+"]");
-	}
-	
 	public void setCounter(int counter) {
 		this.counter = counter;
 		if (counter>nCounters-1 && nCounters<MAX_COUNTERS)
 			nCounters = counter + 1;
 	}
 
-	public int getCounter() {
-		return counter;
+	public boolean promptBeforeDeleting() {
+	    if (promptBeforeDeletingCalled)
+	    	return promptBeforeDeleting;
+	    else
+			return nMarkers>10  && imp!=null && imp.getWindow()!=null;
+	} 
+
+	public void promptBeforeDeleting(Boolean prompt) {
+		promptBeforeDeleting = prompt;
+		promptBeforeDeletingCalled = true;
 	}
 
 	public static void setDefaultCounter(int counter) {
 		defaultCounter = counter;
 	}
 
-	public int getCount(int counter) {
-		if (counter==0 && counters==null)
-			return nPoints;
-		else
-			return counts[counter];
-	}
-	
-	/** Returns the counter assocated with the specified point. */
-	public int getCounter(int index) {
-		if (counters==null || index>=counters.length)
-			return 0;
-		else
-			return counters[index];
-	}
-
 	public int[] getCounters() {
-		if (counters==null)
+		if (nPoints>65535)
 			return null;
 		int[] temp = new int[nPoints];
-		for (int i=0; i<nPoints; i++)
-			temp[i] = (counters[i]&0xff) + ((positions[i]&0xffff)<<8);
+		if (counters!=null) {
+			for (int i=0; i<nPoints; i++)
+				temp[i] = (counters[i]&0xff) + ((positions[i]&0xffff)<<8);
+		}
 		return temp;
 	}
 
@@ -616,7 +693,6 @@ public class PointRoi extends PolygonRoi {
 		rt.setValue(firstColumnHdr, row, "Total");
 		for (int i=0; i<nCounters; i++)
 			rt.setValue("Ctr "+i, row, counts[i]);
-		rt.showRowNumbers(false);
 		rt.show(getCountsTitle());
 		if (IJ.debugMode) debug();
 	}
@@ -625,12 +701,13 @@ public class PointRoi extends PolygonRoi {
 		FloatPolygon p = getFloatPolygon();
 		ResultsTable rt = new ResultsTable();
 		for (int i=0; i<nPoints; i++) {
-			rt.setValue("Counter", i, counters[i]);
-			rt.setValue("Position", i, positions[i]);
+			if (counters!=null) {
+				rt.setValue("Counter", i, counters[i]);
+				rt.setValue("Position", i, positions[i]);
+			} 
 			rt.setValue("X", i, p.xpoints[i]);
 			rt.setValue("Y", i, p.ypoints[i]);
 		}
-		rt.showRowNumbers(false);
 		rt.show(getCountsTitle());
 	}
 
@@ -709,7 +786,7 @@ public class PointRoi extends PolygonRoi {
 
 	/**
 	 * Custom iterator for points contained in a {@link PointRoi}.
-	 * @author W. Burger
+	 * Author: W. Burger
 	*/
 	public Iterator<Point> iterator() {	
 		return new Iterator<Point>() {
@@ -734,6 +811,25 @@ public class PointRoi extends PolygonRoi {
 				throw new UnsupportedOperationException();
 			}
 		};
+	}
+	
+	@Override
+	protected int getClosestPoint(double x, double y, FloatPolygon points) {
+		int index = -1;
+		double distance = Double.MAX_VALUE;
+		int slice = imp!=null&&positions!=null&&imp.getStackSize()>1?imp.getCurrentSlice():0;
+		if (Prefs.showAllPoints)
+			slice = 0;
+		for (int i=0; i<points.npoints; i++) {
+			double dx = points.xpoints[i] - x;
+			double dy = points.ypoints[i] - y;
+			double distance2 = dx*dx+dy*dy;
+			if (distance2<distance && (slice==0||slice==positions[i])) {
+				distance = distance2;
+				index = i;
+			}
+		}
+		return index;
 	}
 
 	/** Returns a copy of this PointRoi. */
@@ -764,7 +860,18 @@ public class PointRoi extends PolygonRoi {
 	public int[] getCounterInfo() {
 		return counterInfo;
 	}
+	
+	public boolean addToOverlay() {
+		return addToOverlay;
+	}
 
+	public String toString() {
+		if (nPoints>1)
+			return ("Roi[Points, count="+nPoints+"]");
+		else
+			return ("Roi[Point, x="+x+", y="+y+"]");
+	}
+	
 	/** @deprecated */
 	public void setHideLabels(boolean hideLabels) {
 		this.showLabels = !hideLabels;
@@ -777,6 +884,15 @@ public class PointRoi extends PolygonRoi {
 	/** @deprecated */
 	public static String getDefaultMarkerSize() {
 		return sizes[defaultSize];
+	}
+	
+	/** Deprecated */
+	public static void setDefaultCrossColor(Color color) {
+	}
+	
+	/** Deprecated */
+	public static Color getDefaultCrossColor() {
+		return null;
 	}
 
 }

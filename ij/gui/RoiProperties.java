@@ -2,7 +2,7 @@ package ij.gui;
 import ij.*;
 import ij.plugin.Colors;
 import ij.io.RoiDecoder;
-import ij.process.FloatPolygon;
+import ij.process.*;
 import ij.measure.*;
 import ij.util.Tools;
 import ij.plugin.filter.Analyzer;
@@ -151,11 +151,10 @@ public class RoiProperties {
 		if (showListCoordinates) {
 			if ((roi instanceof PointRoi) && Toolbar.getMultiPointMode())
 				showPointCounts = true;
-			int n = roi.getFloatPolygon().npoints;
 			if (showPointCounts)
 				gd.addCheckbox("Show point counts (shortcut: alt+y)", listCoordinates);
 			else
-				gd.addCheckbox("List coordinates ("+n+")", listCoordinates);
+				gd.addCheckbox("List coordinates ("+roi.size()+")", listCoordinates);
 			if (nProperties>0)
 				gd.addCheckbox("List properties ("+nProperties+")", listProperties);
 			else {
@@ -292,17 +291,24 @@ public class RoiProperties {
 	}
 		
 	public boolean showImageDialog(String name) {
-		GenericDialog gd = new GenericDialog(title);
+		ImageRoi iRoi = (ImageRoi)roi;
+		boolean zeroTransparent =  iRoi.getZeroTransparent();
+		GenericDialog gd = new GenericDialog("Image ROI Properties");
 		gd.addStringField("Name:", name, 15);
-		gd.addNumericField("Opacity (0-100%):", ((ImageRoi)roi).getOpacity()*100.0, 0);
+		gd.addNumericField("Opacity (0-100%):", iRoi.getOpacity()*100.0, 0);
+		gd.addCheckbox("Transparent background", zeroTransparent);
 		if (addToOverlay)
 			gd.addCheckbox("New Overlay", false);
 		gd.showDialog();
-		if (gd.wasCanceled()) return false;
+		if (gd.wasCanceled())
+			return false;
 		name = gd.getNextString();
 		roi.setName(name.length()>0?name:null);
 		double opacity = gd.getNextNumber()/100.0;
-		((ImageRoi)roi).setOpacity(opacity);
+		iRoi.setOpacity(opacity);
+		boolean zeroTransparent2 = gd.getNextBoolean();
+		if (zeroTransparent!=zeroTransparent2)
+			iRoi.setZeroTransparent(zeroTransparent2);
 		boolean newOverlay = addToOverlay?gd.getNextBoolean():false;
 		if (newOverlay) roi.setName("new-overlay");
 		return true;
@@ -341,7 +347,6 @@ public class RoiProperties {
 			rt.addValue("X", fp.xpoints[i]);
 			rt.addValue("Y", fp.ypoints[i]);
 		}
-		rt.showRowNumbers(false);
 		rt.show("XY_"+title);
 	}
 	

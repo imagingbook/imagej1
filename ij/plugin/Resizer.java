@@ -26,6 +26,9 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 		ImagePlus imp = IJ.getImage();
 		ImageProcessor ip = imp.getProcessor();
 		Roi roi = imp.getRoi();
+		int bitDepth = imp.getBitDepth();
+		double min = ip.getMin();
+		double max = ip.getMax();	
 		if ((roi==null||!roi.isArea()) && crop) {
 			IJ.error(crop?"Crop":"Resize", "Area selection required");
 			return;
@@ -47,8 +50,12 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 				ShapeRoi shape1 = new ShapeRoi(roi);
 				ShapeRoi shape2 = new ShapeRoi(new Roi(0, 0, w, h));
 				roi = shape2.and(shape1);
-				if (roi.getBounds().width==0 || roi.getBounds().height==0)
-					throw new IllegalArgumentException("Selection is outside the image");
+				if (roi.getBounds().width==0 || roi.getBounds().height==0) {
+					if (IJ.isMacro())
+						IJ.log("Selection is outside image");
+					else
+						throw new IllegalArgumentException("Selection is outside image");
+				}
 				if (restoreRoi) imp.setRoi(roi);
 			}
 		}
@@ -79,7 +86,7 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 				z1 = imp.getNSlices();
 				t1 = imp.getNFrames();
 			}
-			if (z1>1 && z1==stackSize)
+			if (z1==stackSize)
 				gd.addNumericField("Depth (images):", z1, 0);
 			else if (z1>1 && z1<stackSize)
 				gd.addNumericField("Depth (slices):", z1, 0);
@@ -103,8 +110,7 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 			}
 			newWidth = (int)gd.getNextNumber();
 			newHeight = (int)gd.getNextNumber();
-			if (z1>1)
-				z2 = (int)gd.getNextNumber();
+			z2 = (int)gd.getNextNumber();
 			if (t1>1)
 				t2 = (int)gd.getNextNumber();
 			if (gd.invalidNumber()) {
@@ -128,8 +134,7 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 				newHeight = (int)Math.round(newWidth*(origHeight/origWidth));
 		}
 		ip.setInterpolationMethod(interpolationMethod);
-		if (stackSize==1)
-			Undo.setup(crop?Undo.TRANSFORM:Undo.TYPE_CONVERSION, imp);
+		Undo.setup(crop?Undo.TRANSFORM:Undo.TYPE_CONVERSION, imp);
 			    	
 		if (roi!=null || newWidth!=origWidth || newHeight!=origHeight) {
 			try {
@@ -204,6 +209,9 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 			imp.changes = false;
 			imp.close();
 			imp2.show();
+		} else if (crop && (bitDepth==16 || bitDepth==32)) {
+			imp.setDisplayRange(min, max);
+			imp.updateAndDraw();
 		}
 	}
 
@@ -225,9 +233,12 @@ public class Resizer implements PlugIn, TextListener, ItemListener  {
 		}
 		if (imp2==null)
 			return null;
-		if (imp2!=imp && imp.isComposite()) {
-			imp2 = new CompositeImage(imp2, ((CompositeImage)imp).getMode());
-			((CompositeImage)imp2).copyLuts(imp);
+		if (imp2!=imp) {
+			if (imp.isComposite()) {
+				imp2 = new CompositeImage(imp2, ((CompositeImage)imp).getMode());
+				((CompositeImage)imp2).copyLuts(imp);
+			} else
+				imp2.setLut(imp.getProcessor().getLut());
 		}
 		imp2.setCalibration(imp.getCalibration());
 		Calibration cal = imp2.getCalibration();

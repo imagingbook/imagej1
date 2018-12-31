@@ -15,6 +15,7 @@ public class ShortProcessor extends ImageProcessor {
 	private short[] snapshotPixels;
 	private byte[] LUT;
 	private boolean fixedScale;
+	private int bgValue;
 
 
 	/** Creates a new ShortProcessor using the specified pixel array and ColorModel.
@@ -86,42 +87,62 @@ public class ShortProcessor extends ImageProcessor {
 	/** Create an 8-bit AWT image by scaling pixels in the range min-max to 0-255. */
 	public Image createImage() {
 		boolean firstTime = pixels8==null;
+		boolean thresholding = minThreshold!=NO_THRESHOLD && lutUpdateMode<NO_LUT_UPDATE;
+		//ij.IJ.log("createImage: "+firstTime+"  "+lutAnimation+"  "+thresholding);
 		if (firstTime || !lutAnimation)
-			create8BitImage();
+			create8BitImage(thresholding&&lutUpdateMode==RED_LUT);
 		if (cm==null)
 			makeDefaultColorModel();
-		if (ij.IJ.isJava16())
-			return createBufferedImage();
-		if (source==null) {
-			source = new MemoryImageSource(width, height, cm, pixels8, 0, width);
-			source.setAnimated(true);
-			source.setFullBufferUpdates(true);
-			img = Toolkit.getDefaultToolkit().createImage(source);
-		} else if (newPixels) {
-			source.newPixels(pixels8, cm, 0, width);
-			newPixels = false;
-		} else
-			source.newPixels();
-		lutAnimation = false;
-	    return img;
+		if (thresholding) {
+			int t1 = (int)minThreshold;
+			int t2 = (int)maxThreshold;
+			int size = width*height;
+			int value;
+			if (lutUpdateMode==BLACK_AND_WHITE_LUT) {
+				for (int i=0; i<size; i++) {
+					value = (pixels[i]&0xffff);
+					if (value>=t1 && value<=t2)
+						pixels8[i] = (byte)255;
+					else
+						pixels8[i] = (byte)0;
+				}
+			} else { // threshold red
+				for (int i=0; i<size; i++) {
+					value = (pixels[i]&0xffff);
+					if (value>=t1 && value<=t2)
+						pixels8[i] = (byte)255;
+				}
+			}
+		}
+		return createBufferedImage();
 	}
 	
 	// create 8-bit image by linearly scaling from 16-bits to 8-bits
-	byte[] create8BitImage() {
+	private byte[] create8BitImage(boolean thresholding) {
 		int size = width*height;
 		if (pixels8==null)
 			pixels8 = new byte[size];
 		int value;
-		int min2=(int)getMin(), max2=(int)getMax(); 
+		int min2=(int)getMin(), max2=(int)getMax();
+		int maxValue = 255;
 		double scale = 256.0/(max2-min2+1);
+		if (thresholding) {
+			maxValue = 254;
+			scale = 255.0/(max2-min2+1);
+		}
 		for (int i=0; i<size; i++) {
 			value = (pixels[i]&0xffff)-min2;
 			if (value<0) value = 0;
 			value = (int)(value*scale+0.5);
-			if (value>255) value = 255;
+			if (value>maxValue) value = maxValue;
 			pixels8[i] = (byte)value;
 		}
 		return pixels8;
+	}
+
+	@Override
+	byte[] create8BitImage() {
+		return create8BitImage(false);
 	}
 
 	Image createBufferedImage() {
@@ -283,7 +304,7 @@ public class ShortProcessor extends ImageProcessor {
 		pixels[index] = (short)value;
 	}
 
-	public final float getf(int x, int y) {
+	public final float getf(int x, int y) {		
 		return pixels[y*width+x]&0xffff;
 	}
 
@@ -424,10 +445,17 @@ public class ShortProcessor extends ImageProcessor {
 	/** Copies the image contained in 'ip' to (xloc, yloc) using one of
 		the transfer modes defined in the Blitter interface. */
 	public void copyBits(ImageProcessor ip, int xloc, int yloc, int mode) {
-		ip = ip.convertToShort(false);
-		new ShortBlitter(this).copyBits(ip, xloc, yloc, mode);
+		boolean temporaryFloat = ip.getBitDepth()==32 && (mode==Blitter.MULTIPLY || mode==Blitter.DIVIDE);
+		if (temporaryFloat) {
+			FloatProcessor ipFloat = this.convertToFloatProcessor();
+			new FloatBlitter(ipFloat).copyBits(ip, xloc, yloc, mode);
+			setPixels(1, ipFloat);
+		} else {
+			ip = ip.convertToShort(false);
+			new ShortBlitter(this).copyBits(ip, xloc, yloc, mode);
+		}
 	}
-
+	
 	/** Transforms the pixel data using a 65536 entry lookup table. */
 	public void applyTable(int[] lut) {
 		if (lut.length!=65536)
@@ -700,7 +728,7 @@ public class ShortProcessor extends ImageProcessor {
 		double xlimit = width-1.0, xlimit2 = width-1.001;
 		double ylimit = height-1.0, ylimit2 = height-1.001;
 		// zero is 32768 for signed images
-		int background = isSigned16Bit()?32768:0; 
+		int background = isSigned16Bit()?bgValue+32768:bgValue; 
 		
 		if (interpolationMethod==BICUBIC) {
 			for (int y=roiY; y<(roiY + roiHeight); y++) {
@@ -948,20 +976,23 @@ public class ShortProcessor extends ImageProcessor {
 			if (fgColor>65535) fgColor = 65535;
 	}
 
-	/** Does nothing. The rotate() and scale() methods always zero fill. */
 	public void setBackgroundValue(double value) {
+		bgValue = (int)value;
+		if (bgValue<0) bgValue = 0;
+		if (bgValue>65535) bgValue = 65535;
 	}
 
-	/** Always returns 0. */
 	public double getBackgroundValue() {
-		return 0.0;
+		return bgValue;
 	}
 
-	/** Returns 65536 bin histogram of the current ROI, which
+	/** Returns 65,536 bin histogram of the current ROI, which
 		can be non-rectangular. */
 	public int[] getHistogram() {
 		if (mask!=null)
 			return getHistogram(mask);
+		int roiX=this.roiX, roiY=this.roiY;
+		int roiWidth=this.roiWidth, roiHeight=this.roiHeight;
 		int[] histogram = new int[65536];
 		for (int y=roiY; y<(roiY+roiHeight); y++) {
 			int i = y*width + roiX;
@@ -974,6 +1005,8 @@ public class ShortProcessor extends ImageProcessor {
 	int[] getHistogram(ImageProcessor mask) {
 		if (mask.getWidth()!=roiWidth||mask.getHeight()!=roiHeight)
 			throw new IllegalArgumentException(maskSizeError(mask));
+		int roiX=this.roiX, roiY=this.roiY;
+		int roiWidth=this.roiWidth, roiHeight=this.roiHeight;
 		byte[] mpixels = (byte[])mask.getPixels();
 		int[] histogram = new int[65536];
 		for (int y=roiY, my=0; y<(roiY+roiHeight); y++, my++) {
@@ -988,36 +1021,14 @@ public class ShortProcessor extends ImageProcessor {
 		return histogram;
 	}
 
+	/** Creates a histogram of length maxof(max+1,256). For small 
+		images or selections, computations using these histograms 
+		are faster compared to 65536 element histograms. */
 	int[] getHistogram2() {
 		if (mask!=null)
 			return getHistogram2(mask);
-		int[] histogram = makeHistogramArray();
-		for (int y=roiY; y<(roiY+roiHeight); y++) {
-			int index = y*width + roiX;
-			for (int i=0; i<roiWidth; i++)
-					histogram[pixels[index++]&0xffff]++;
-		}
-		return histogram;
-	}
-
-	private int[] getHistogram2(ImageProcessor mask) {
-		if (mask.getWidth()!=roiWidth||mask.getHeight()!=roiHeight)
-			throw new IllegalArgumentException(maskSizeError(mask));
-		byte[] mpixels = (byte[])mask.getPixels();
-		int[] histogram = makeHistogramArray();
-		for (int y=roiY, my=0; y<(roiY+roiHeight); y++, my++) {
-			int index = y * width + roiX;
-			int mi = my * roiWidth;
-			for (int i=0; i<roiWidth; i++) {
-				if (mpixels[mi++]!=0)
-					histogram[pixels[index]&0xffff]++;
-				index++;
-			}
-		}
-		return histogram;
-	}
-
-	private int[] makeHistogramArray() {
+		int roiX=this.roiX, roiY=this.roiY;
+		int roiWidth=this.roiWidth, roiHeight=this.roiHeight;
 		int max = 0;
 		int value;
 		for (int y=roiY; y<(roiY+roiHeight); y++) {
@@ -1029,34 +1040,85 @@ public class ShortProcessor extends ImageProcessor {
 			}
 		}
 		int size = max + 1;
-		if (size<256)
-			size = 256;
-		return new int[size];
+		if (size<256) size = 256;
+		int[] histogram = new int[size];
+		for (int y=roiY; y<(roiY+roiHeight); y++) {
+			int index = y*width + roiX;
+			for (int i=0; i<roiWidth; i++)
+					histogram[pixels[index++]&0xffff]++;
+		}
+		return histogram;
 	}
 
+	private int[] getHistogram2(ImageProcessor mask) {
+		if (mask.getWidth()!=roiWidth||mask.getHeight()!=roiHeight)
+			throw new IllegalArgumentException(maskSizeError(mask));
+		int roiX=this.roiX, roiY=this.roiY;
+		int roiWidth=this.roiWidth, roiHeight=this.roiHeight;
+		byte[] mpixels = (byte[])mask.getPixels();		
+		int max = 0;
+		int value;
+		for (int y=roiY; y<(roiY+roiHeight); y++) {
+			int index = y*width + roiX;
+			for (int i=0; i<roiWidth; i++) {
+				value = pixels[index++]&0xffff;
+				if (value>max)
+					max = value;
+			}
+		}
+		int size = max + 1;
+		if (size<256) size = 256;
+		int[] histogram = new int[size];
+		for (int y=roiY, my=0; y<(roiY+roiHeight); y++, my++) {
+			int index = y * width + roiX;
+			int mi = my * roiWidth;
+			for (int i=0; i<roiWidth; i++) {
+				if (mpixels[mi++]!=0)
+					histogram[pixels[index]&0xffff]++;
+				index++;
+			}
+		}
+		return histogram;
+	}
+	
+	public void setLutAnimation(boolean lutAnimation) {
+		this.lutAnimation = false;
+	}
+	
 	public void setThreshold(double minThreshold, double maxThreshold, int lutUpdate) {
-		if (minThreshold==NO_THRESHOLD)
-			{resetThreshold(); return;}
+		if (minThreshold==NO_THRESHOLD) {
+			resetThreshold();
+			return;
+		}
 		if (minThreshold<0.0) minThreshold = 0.0;
 		if (maxThreshold>65535.0) maxThreshold = 65535.0;
 		int min2=(int)getMin(), max2=(int)getMax();
 		if (max2>min2) {
-			// scale to 0-255 using same method as create8BitImage()
-			double scale = 256.0/(max2-min2+1);
-			double minT = minThreshold-min2;
-			if (minT<0) minT = 0;
-			minT = (int)(minT*scale+0.5);
-			if (minT>255) minT = 255;
-			//ij.IJ.log("setThreshold: "+minT+" "+Math.round(((minThreshold-min2)/(max2-min2))*255.0));
-			double maxT = maxThreshold-min2;
-			if (maxT<0) maxT = 0;
-			maxT = (int)(maxT*scale+0.5);
-			if (maxT>255) maxT = 255;
-			super.setThreshold(minT, maxT, lutUpdate); // update LUT
+			if (lutUpdate==OVER_UNDER_LUT) {
+				double minT = ((minThreshold-getMin())/(getMax()-getMin())*255.0);
+				double maxT = ((maxThreshold-getMin())/(getMax()-getMin())*255.0);
+				super.setThreshold(minT, maxT, lutUpdate); // update LUT
+			} else {
+				lutUpdateMode = lutUpdate;
+				if (rLUT1==null) {
+					if (cm==null)
+						makeDefaultColorModel();
+					baseCM = cm;
+					IndexColorModel m = (IndexColorModel)cm;
+					rLUT1 = new byte[256]; gLUT1 = new byte[256]; bLUT1 = new byte[256];
+					m.getReds(rLUT1); m.getGreens(gLUT1); m.getBlues(bLUT1);
+					rLUT2 = new byte[256]; gLUT2 = new byte[256]; bLUT2 = new byte[256];
+				}
+				if (lutUpdateMode==RED_LUT)
+					cm = getThresholdColorModel();
+				else
+					cm = getDefaultColorModel();
+			}
 		} else
 			super.resetThreshold();
 		this.minThreshold = Math.round(minThreshold);
 		this.maxThreshold = Math.round(maxThreshold);
+		//ij.IJ.log("setThreshold: "+lutUpdateMode+" "+this.minThreshold+" "+this.maxThreshold);
 	}
 	
 	/** Performs a convolution operation using the specified kernel. */
@@ -1072,7 +1134,11 @@ public class ShortProcessor extends ImageProcessor {
     /** Adds pseudorandom, Gaussian ("normally") distributed values, with
     	mean 0.0 and the specified standard deviation, to this image or ROI. */
     public void noise(double standardDeviation) {
-		Random rnd=new Random();
+		if (rnd==null)
+			rnd = new Random();
+		if (!Double.isNaN(seed))
+			rnd.setSeed((int) seed);
+		seed = Double.NaN;
 		int v, ran;
 		boolean inRange;
 		for (int y=roiY; y<(roiY+roiHeight); y++) {
@@ -1155,6 +1221,22 @@ public class ShortProcessor extends ImageProcessor {
 	/** Returns 'true' if this is a signed 16-bit image. */
 	public boolean isSigned16Bit() {
 		return cTable!=null && cTable[0]==-32768f && cTable[1]==-32767f;
+	}
+	
+	/** Returns a binary mask, or null if a threshold is not set. */
+	public ByteProcessor createMask() {
+		if (getMinThreshold()==NO_THRESHOLD)
+			return null;
+		int minThreshold = (int)getMinThreshold();
+		int maxThreshold = (int)getMaxThreshold();
+		ByteProcessor mask = new ByteProcessor(width, height);
+		byte[] mpixels = (byte[])mask.getPixels();
+		for (int i=0; i<pixels.length; i++) {
+			int value = pixels[i]&0xffff;
+			if (value>=minThreshold && value<=maxThreshold)
+				mpixels[i] = (byte)255;
+		}
+		return mask;
 	}
 
 	/** Not implemented. */

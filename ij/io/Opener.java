@@ -14,9 +14,8 @@ import java.awt.image.*;
 import java.io.*;
 import java.net.URL;
 import java.net.*;
-import java.util.Hashtable;
+import java.util.*;
 import java.util.zip.*;
-import java.util.Locale;
 import javax.swing.*;
 import javax.swing.filechooser.*;
 import java.awt.event.KeyEvent;
@@ -307,10 +306,11 @@ public class Opener {
 		FileOpener.setSilentMode(silentMode);
 		if (directory.length()>0 && !(directory.endsWith("/")||directory.endsWith("\\")))
 			directory += Prefs.separator;
+		OpenDialog.setLastDirectory(directory);
+		OpenDialog.setLastName(name);
 		String path = directory+name;
 		fileType = getFileType(path);
-		if (IJ.debugMode)
-			IJ.log("openImage: \""+types[fileType]+"\", "+path);
+		if (IJ.debugMode) IJ.log("openImage: \""+types[fileType]+"\", "+path);
 		switch (fileType) {
 			case TIFF:
 				imp = openTiff(directory, name);
@@ -355,6 +355,7 @@ public class Opener {
 				return openZip(path);
 			case AVI:
 				AVI_Reader reader = new AVI_Reader();
+				reader.setVirtual(true);
 				reader.displayDialog(!IJ.macroRunning());
 				reader.run(path);
 				return reader.getImagePlus();
@@ -1038,7 +1039,8 @@ public class Opener {
 		}
 		FileOpener fo = new FileOpener(info[0]);
 		imp = fo.openImage();
-		if (imp==null) return null;
+		if (imp==null)
+			return null;
 		int[] offsets = info[0].stripOffsets;
 		if (offsets!=null&&offsets.length>1 && offsets[offsets.length-1]<offsets[0])
 			ij.IJ.run(imp, "Flip Vertically", "stack");

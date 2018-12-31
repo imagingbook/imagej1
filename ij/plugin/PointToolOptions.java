@@ -23,6 +23,7 @@ public class PointToolOptions implements PlugIn, DialogListener {
 	+"<li> Press 'alt+y' (<i>Edit&gt;Selection&gt;Properties</i> plus<br>alt key) to display the counts in a results table.<br>"
 	+"<li> Press 'm' (<i>Analyze&gt;Measure</i>) to list the counter<br>and stack position associated with each point.<br>"
 	+"<li> Use <i>File&gt;Save As&gt;Tiff</i> or <i>File&gt;Save As&gt;Selection</i><br>to save the points and counts.<br>"
+	+"<li> Press 'F' (<i>Image&gt;Overlay</i>&gt;Flatten</i>) to create an<br>RGB image with embedded markers for export.<br>"
 	+"<li> Hold the shift key down and points will be<br>constrained to a horizontal or vertical line.<br>"
 	+"</ul>"
 	+" <br>"
@@ -43,6 +44,7 @@ public class PointToolOptions implements PlugIn, DialogListener {
 		if (isMacro) {
 			options = options.replace("selection=", "color=");
 			options = options.replace("marker=", "size=");
+			options = options.replace("type=Crosshair", "type=Cross");
 			Macro.setOptions(options);
 			legacyMacro = options.contains("auto-") || options.contains("add");
 		}
@@ -71,8 +73,8 @@ public class PointToolOptions implements PlugIn, DialogListener {
 		}
 		gd.setInsets(5, 20, 0);
 		gd.addCheckbox("Label points", !Prefs.noPointLabels);
+		gd.addCheckbox("Show on all slices", Prefs.showAllPoints);
 		if (multipointTool) {
-			gd.addCheckbox("Show all", Prefs.showAllPoints);
 			gd.setInsets(15,0,5);
 			String[] choices =  PointRoi.getCounterChoices();
 			gd.addChoice("Counter:", choices, choices[getCounter()]);
@@ -125,11 +127,11 @@ public class PointToolOptions implements PlugIn, DialogListener {
 			updateLabels = true;
 		}
 		Prefs.noPointLabels = noPointLabels;
+		boolean showAllPoints = gd.getNextBoolean();
+		if (showAllPoints!=Prefs.showAllPoints)
+			redraw = true;
+		Prefs.showAllPoints = showAllPoints;
 		if (multipointTool) {
-			boolean showAllPoints = gd.getNextBoolean();
-			if (showAllPoints!=Prefs.showAllPoints)
-				redraw = true;
-			Prefs.showAllPoints = showAllPoints;
 			int counter = gd.getNextChoiceIndex();
 			if (counter!=getCounter()) {
 				setCounter(counter);

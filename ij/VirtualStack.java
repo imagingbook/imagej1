@@ -6,6 +6,7 @@ import ij.util.Tools;
 import java.io.*;
 import java.awt.*;
 import java.awt.image.ColorModel;
+import java.util.Properties;
 
 /** This class represents an array of disk-resident images. */
 public class VirtualStack extends ImageStack {
@@ -15,9 +16,15 @@ public class VirtualStack extends ImageStack {
 	private String[] names;
 	private String[] labels;
 	private int bitDepth;
+	private Properties  properties;
+
 	
 	/** Default constructor. */
 	public VirtualStack() { }
+	
+	public VirtualStack(int width, int height) {
+		super(width, height);
+	}
 
 	/** Creates an empty virtual stack. */
 	public VirtualStack(int width, int height, ColorModel cm, String path) {
@@ -75,13 +82,13 @@ public class VirtualStack extends ImageStack {
 	public void deleteSlice(int n) {
 		if (n<1 || n>nSlices)
 			throw new IllegalArgumentException("Argument out of range: "+n);
-			if (nSlices<1)
-				return;
-			for (int i=n; i<nSlices; i++)
-				names[i-1] = names[i];
-			names[nSlices-1] = null;
-			nSlices--;
-		}
+		if (nSlices<1)
+			return;
+		for (int i=n; i<nSlices; i++)
+			names[i-1] = names[i];
+		names[nSlices-1] = null;
+		nSlices--;
+	}
 	
 	/** Deletes the last slice in the stack. */
 	public void deleteLastSlice() {
@@ -107,7 +114,6 @@ public class VirtualStack extends ImageStack {
 		were 1<=n<=nslices. Returns null if the stack is empty.
 	*/
 	public ImageProcessor getProcessor(int n) {
-		//IJ.log("getProcessor: "+n+"  "+names[n-1]+"  "+bitDepth);
 		if (path==null) {
 			ImageProcessor ip = new ByteProcessor(getWidth(), getHeight());
 			label(ip, ""+n, Color.white);
@@ -131,6 +137,7 @@ public class VirtualStack extends ImageStack {
 			depthThisImage = imp.getBitDepth();
 			ip = imp.getProcessor();
 			ip.setOverlay(imp.getOverlay());
+			properties = imp.getProperty("FHT")!=null?imp.getProperties():null;
 		} else {
 			File f = new File(path, names[n-1]);
 			String msg = f.exists()?"Error opening ":"File not found: ";
@@ -182,10 +189,10 @@ public class VirtualStack extends ImageStack {
 		String label = labels[n-1];
 		if (label==null)
 			return names[n-1];
-		else if (label.length()<=60)
-			return label;
-		else
+		else if (label.length()>100 && label.indexOf('\n')>0)
 			return names[n-1]+"\n"+label;
+		else
+			return label;
 	}
 	
 	/** Returns null. */
@@ -239,6 +246,12 @@ public class VirtualStack extends ImageStack {
 		}
 		return this;
 	}
+	
+	/** Returns the ImagePlus Properties assoctated with the current slice, or null. */
+	public Properties getProperties() {
+		return properties;
+	}
+
 
 } 
 

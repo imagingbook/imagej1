@@ -88,9 +88,7 @@ public class StackWriter implements PlugIn {
 			return;			
 		}
 		String format = fileType.toLowerCase(Locale.US);
-		if (format.equals("gif") && !FileSaver.okForGif(imp))
-			return;
-		else if (format.equals("fits") && !FileSaver.okForFits(imp))
+		if (format.equals("fits") && !FileSaver.okForFits(imp))
 			return;
 			
 		if (format.equals("text"))
@@ -118,8 +116,8 @@ public class StackWriter implements PlugIn {
 				}
 				if (!f.isDirectory() && (exists||directory.lastIndexOf(".")>directory.length()-5))
 					directory = f.getParent();
-				if (!directory.endsWith(File.separator))
-					directory += File.separator;
+				if (!(directory.endsWith(File.separator)||directory.endsWith("/")))
+					directory += "/";
 			}
 		}
 		if (directory==null) {

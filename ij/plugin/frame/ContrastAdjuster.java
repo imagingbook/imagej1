@@ -352,7 +352,6 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		}
 		plot.defaultMin = defaultMin;
 		plot.defaultMax = defaultMax;
-		//plot.histogram = null;
 		int valueRange = (int)(defaultMax-defaultMin);
 		int newSliderRange = valueRange;
 		if (newSliderRange>640 && newSliderRange<1280)
@@ -364,7 +363,6 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		double displayRange = max-min;
 		if (valueRange>=1280 && valueRange!=0 && displayRange/valueRange<0.25)
 			newSliderRange *= 1.6666;
-		//IJ.log(valueRange+" "+displayRange+" "+newSliderRange);
 		if (newSliderRange!=sliderRange) {
 			sliderRange = newSliderRange;
 			updateScrollBars(null, true);
@@ -657,7 +655,7 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		if (imp.getStackSize()>1 && !imp.isComposite()) {
 			ImageStack stack = imp.getStack();
 			YesNoCancelDialog d = new YesNoCancelDialog(new Frame(),
-				"Entire Stack?", "Apply LUT to all "+stack.getSize()+" slices in the stack?");
+				"Entire Stack?", "Apply LUT to all "+stack.getSize()+" stack slices?");
 			if (d.cancelPressed())
 				{imp.unlock(); return;}
 			if (d.yesPressed()) {
@@ -718,7 +716,6 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		previousImageID = 0;
 	 	((ColorProcessor)ip).caSnapshot(false);
 		setup();
-		imp.deleteRoi();
 		if (Recorder.record) {
 			if (Recorder.scriptMode())
 				Recorder.recordCall("IJ.run(imp, \"Apply LUT\", \"\");");
@@ -820,11 +817,6 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 			return;
 		}
 		updateScrollBars(null, false);
-		//if (roi!=null) { ???
-		//	ImageProcessor mask = roi.getMask();
-		//	if (mask!=null)
-		//		ip.reset(mask);
-		//}
 		if (Recorder.record) {
 			if (Recorder.scriptMode())
 				Recorder.recordCall("IJ.run(imp, \"Enhance Contrast\", \"saturated=0.35\");");
@@ -908,12 +900,18 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 					else
 						Recorder.recordString("call(\"ij.ImagePlus.setDefault16bitRange\", "+range2+");\n");
 				}
-
 			}
 		}
 	}
 	
 	private void propagate(ImagePlus img) {
+		if (img.getBitDepth()==24) {
+			GenericDialog gd = new GenericDialog("Contrast Adjuster");
+			gd.addMessage( "Propagation of RGB images not supported. As a work-around,\nconvert images to multi-channel composite color.");
+			gd.hideCancelButton();
+			gd.showDialog();
+			return;
+		}
 		int[] list = WindowManager.getIDList();
 		if (list==null) return;
 		int nImages = list.length;
@@ -1031,18 +1029,18 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		}
 	}
 
-	void recordSetMinAndMax(double min, double max) {
+	public static void recordSetMinAndMax(double min, double max) {
 		if ((int)min==min && (int)max==max) {
 			int imin=(int)min, imax = (int)max;
 			if (Recorder.scriptMode())
-				Recorder.recordCall("IJ.setMinAndMax(imp, "+imin+", "+imax+");");
+				Recorder.recordCall("imp.setDisplayRange("+imin+", "+imax+");");
 			else
 				Recorder.record("setMinAndMax", imin, imax);
 		} else {
 			if (Recorder.scriptMode())
-				Recorder.recordCall("IJ.setMinAndMax(imp, "+min+", "+max+");");
+				Recorder.recordCall("imp.setDisplayRange("+IJ.d2s(min,2)+", "+IJ.d2s(max,2)+");");
 			else
-				Recorder.record("setMinAndMax", min, max);
+				Recorder.record("setMinAndMax", IJ.d2s(min,2), IJ.d2s(max,2));
 		}
 	}
 	
@@ -1092,7 +1090,6 @@ public class ContrastAdjuster extends PlugInDialog implements Runnable,
 		ip = imp.getProcessor();
 		if (RGBImage && !imp.lock())
 			{imp=null; return;}
-		//IJ.write("setup: "+(imp==null?"null":imp.getTitle()));
 		switch (action) {
 			case RESET:
 				reset(imp, ip);

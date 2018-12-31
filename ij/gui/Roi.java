@@ -78,6 +78,8 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	protected boolean overlay;
 	protected boolean wideLine;
 	protected boolean ignoreClipRect;
+	protected double flattenScale = 1.0;
+
 	private String name;
 	private int position;
 	private int channel, slice, frame;
@@ -89,6 +91,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	private boolean isCursor;
 	private double xcenter = Double.NaN;
 	private double ycenter;
+	private boolean listenersNotified;
 
 
 	/** Creates a rectangular ROI. */
@@ -345,17 +348,6 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 		Shape s = at.createTransformedShape(shape);
 		Rectangle2D r = s.getBounds2D();
 		return Math.min(r.getWidth(), r.getHeight());
-		/*
-		ShapeRoi roi2 = new ShapeRoi(s);
-		Roi[] rois = roi2.getRois();
-		if (rois!=null && rois.length>0) {
-			Polygon p = rois[0].getPolygon();
-			ImageProcessor ip = imp.getProcessor();
-			for (int i=0; i<p.npoints-1; i++)
-				ip.drawLine(p.xpoints[i], p.ypoints[i], p.xpoints[i+1], p.ypoints[i+1]);
-			imp.updateAndDraw();
-		}
-		*/
 	}
 
 	/** Return this selection's bounding rectangle. */
@@ -569,7 +561,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	
 	/** Returns the coordinates of the pixels inside this ROI as a FloatPolygon.
 	 * @see #getContainedPoints()
-	 * @see #Iterator()
+	 * @see #iterator()
 	 */
 	public FloatPolygon getContainedFloatPoints() {
 		Roi roi2 = this;
@@ -598,7 +590,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	 * ax, ay, bx, by: points A and B of line segment
 	 * cx, cy, rad: Circle center and radius.
 	 * ignoreOutside: if true, ignores intersections outside the line segment A-B
-	 * @Returns an array of 0, 2 or 4 coordinates (for 0, 1, or 2 intersection
+	 * Returns an array of 0, 2 or 4 coordinates (for 0, 1, or 2 intersection
 	 * points). If two intersection points are returned, they are listed in travel
 	 * direction A->B
 	 * </pre>
@@ -1037,6 +1029,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 		oldX = x; oldY = y;
 		cachedMask = null;
 		showStatus();
+		notifyListeners(RoiListener.MOVED);
 	}
 	
 	// Finds the union of current and previous roi
@@ -1393,7 +1386,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 			previousRoi.modState = NO_MODS;
 	 }
 
-	protected void showStatus() {
+	public void showStatus() {
 		if (imp==null)
 			return;
 		String value;
@@ -1406,7 +1399,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 			value = "";
 		Calibration cal = imp.getCalibration();
 		String size;
-		if (cal.scaled() && !(IJ.altKeyDown()||(state==NORMAL&&IJ.shiftKeyDown())))
+		if (cal.scaled())
 			size = ", w="+IJ.d2s(width*cal.pixelWidth)+" ("+width+"), h="+IJ.d2s(height*cal.pixelHeight)+" ("+height+")";
 		else
 			size = ", w="+width+", h="+height;
@@ -1544,7 +1537,8 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	public void copyAttributes(Roi roi2) {
 		this. strokeColor = roi2. strokeColor;
 		this.fillColor = roi2.fillColor;
-		this.stroke = roi2.stroke;
+		this.setStrokeWidth(roi2.getStrokeWidth());
+		this.setName(roi2.getName());
 	}
 
 	/**
@@ -1719,6 +1713,19 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 		return hyperstackPosition;
 	}
 	
+	/** Sets the position of this ROI based on the stack position of the specified image.  */
+	public void setPosition(ImagePlus imp ) {
+		if (imp==null)
+			return;
+		if (imp.isHyperStack()) {
+			int channel = imp.getDisplayMode()==IJ.COMPOSITE?0:imp.getChannel();
+			setPosition(channel, imp.getSlice(), imp.getFrame());
+		} else if (imp.getStackSize()>1)
+			setPosition(imp.getCurrentSlice());
+		else
+			setPosition(0);
+	}
+		
 	/** Returns the channel position of this ROI, or zero
 	*  if this ROI is not associated with a particular channel.
 	*/
@@ -1747,7 +1754,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 		prototypeOverlay.drawNames(overlay.getDrawNames());
 		prototypeOverlay.drawBackgrounds(overlay.getDrawBackgrounds());
 		prototypeOverlay.setLabelColor(overlay.getLabelColor());
-		prototypeOverlay.setLabelFont(overlay.getLabelFont());
+		prototypeOverlay.setLabelFont(overlay.getLabelFont(), overlay.scalableLabels());
 	} 
 
 	// Used by the FileOpener and RoiDecoder to restore overlay settings. */
@@ -2035,20 +2042,27 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	}
 	
 	public ImageStatistics getStatistics() {
-		ImageProcessor ip = getMask();
-		Rectangle r = getBounds();
-		if (ip==null)
-			ip = new ByteProcessor(r.width, r.height);
-		Roi roi = (Roi)this.clone();
-		roi.setLocation(0.0, 0.0);
+		Roi roi = this;
+		ImageProcessor ip = null;
+		if (imp!=null)
+			ip = imp.getProcessor();
+		boolean noImage = ip==null;
+		Rectangle bounds = null;
+		if (noImage) {
+			roi = (Roi)this.clone();
+			bounds = roi.getBounds();
+			ip = new ByteProcessor(bounds.width, bounds.height);
+			roi.setLocation(0, 0);
+		}
+		if (roi.isLine())
+			roi = null;
 		ip.setRoi(roi);
-		int params = Measurements.AREA+Measurements.CENTROID+Measurements.ELLIPSE
-			+Measurements.ELLIPSE+Measurements.CIRCULARITY+Measurements.SHAPE_DESCRIPTORS
-			+Measurements.PERIMETER+Measurements.RECT;
-		ImageStatistics stats = ImageStatistics.getStatistics(ip, params, null);
-		stats.mean = stats.min = stats.max = Double.NaN;
-		stats.xCentroid += r.x;
-		stats.yCentroid += r.y;
+		ImageStatistics stats = ip.getStatistics();
+		if (noImage) {
+			stats.mean = stats.min = stats.max = Double.NaN;
+			stats.xCentroid+=bounds.x; stats.yCentroid+=bounds.y; 
+		}
+		ip.resetRoi();
 		return stats;
 	}
 
@@ -2068,6 +2082,11 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 		ycenter = y;
 	}
 	
+	/** Returns the number of points in this selection; equivalent to getPolygon().npoints. */
+	public int size() {
+		return 4;
+	}
+
 	/* 
 	 * Returns the center of the of this selection's countour, or the
 	 * center of the bounding box of composite selections.<br> 
@@ -2101,7 +2120,16 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 			Integer.rotateRight(new Double(getYBase()).hashCode(),16);
 	}
 	
+	public void setFlattenScale(double scale) {
+		flattenScale = scale;
+	}
+	
 	public void notifyListeners(int id) {
+		if (id==RoiListener.CREATED) {
+			if (listenersNotified)
+				return;
+			listenersNotified = true;	
+		}
 		synchronized (listeners) {
 			for (int i=0; i<listeners.size(); i++) {
 				RoiListener listener = (RoiListener)listeners.elementAt(i);
@@ -2109,7 +2137,7 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 			}
 		}
 	}
-	
+
 	public static void addRoiListener(RoiListener listener) {
 		listeners.addElement(listener);
 	}
@@ -2119,16 +2147,16 @@ public class Roi extends Object implements Cloneable, java.io.Serializable, Iter
 	}
 	
 	/**
-	 * Required by the {@link Interable} interface.
+	 * Required by the {@link Iterable} interface.
 	 * Use to iterate over the contained coordinates. Usage example: 
 	 * <pre>
 	 * for (Point p : roi) {
 	 *   // process p
 	 * }
 	 * </pre>
+	 * Author: Wilhelm Burger
 	 * @see #getContainedPoints()
 	 * @see #getContainedFloatPoints()
-	 * @author Wilhelm Burger
 	*/
 	public Iterator<Point> iterator() {
 		// Returns the default (mask-based) point iterator. Note that 'Line' overrides the 

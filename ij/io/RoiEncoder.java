@@ -142,8 +142,8 @@ public class RoiEncoder {
 			}
 		}
 		
+		countersSize = 0;
 		if (roi instanceof PointRoi) {
-			countersSize = 0;
 			counters = ((PointRoi)roi).getCounters();
 			if (counters!=null && counters.length>=n)
 				countersSize = n*4;
@@ -168,7 +168,22 @@ public class RoiEncoder {
 				putShort(RoiDecoder.OPTIONS, options);
 			}
 		}
-		putShort(RoiDecoder.N_COORDINATES, n);
+		if (n>65535 && type!=point) {
+			if (type==polygon || type==freehand || type==traced) {
+				String name = roi.getName();
+				roi = new ShapeRoi(roi);
+				if (name!=null) roi.setName(name);
+				saveShapeRoi(roi, rect, f, options);
+				return;
+			}
+			ij.IJ.beep();
+			ij.IJ.log("Non-polygonal selections with more than 65k points cannot be saved.");
+			n = 65535;
+		}
+		if (type==point && n>65535)
+			putInt(RoiDecoder.SIZE, n);
+		else 
+			putShort(RoiDecoder.N_COORDINATES, n);
 		putInt(RoiDecoder.POSITION, roi.getPosition());
 		
 		if (type==rect) {
@@ -202,6 +217,8 @@ public class RoiEncoder {
 			PointRoi point = (PointRoi)roi;
 			putByte(RoiDecoder.POINT_TYPE, point.getPointType());
 			putShort(RoiDecoder.STROKE_WIDTH, point.getSize());
+			if (point.getShowLabels())
+				options |= RoiDecoder.SHOW_LABELS;
 		}
 
 		if (roi instanceof RotatedRectRoi || roi instanceof EllipseRoi) {
@@ -314,6 +331,8 @@ public class RoiEncoder {
 		Font font = proto.getLabelFont();
 		if (font!=null && font.getStyle()==Font.BOLD)
 			options |= RoiDecoder.OVERLAY_BOLD;
+		if (proto.scalableLabels())
+			options |= RoiDecoder.SCALE_LABELS;
 		putShort(RoiDecoder.OPTIONS, options);
 	}
 	
@@ -414,6 +433,7 @@ public class RoiEncoder {
 		putInt(hdr2Offset+RoiDecoder.COUNTERS_OFFSET, offset);
 		for (int i=0; i<countersSize/4; i++)
 			putInt(offset+i*4, counters[i]);
+		countersSize = 0;
 	}
 
     void putByte(int base, int v) {
