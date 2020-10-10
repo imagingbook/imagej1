@@ -161,16 +161,15 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 								macrosMenu.add(new MenuItem(name));
 						}
 					}
-					//IJ.log(count+" "+name+" "+macroStarts[count]);
 					count++;
 				}					
 			} else if (token==EOF)
 				break;
 		}
 		nMacros = count;
-		if (toolCount>0 && (isPluginsMacrosMenu||macrosMenu==null) && installTools) {
+		if (toolCount>0  && installTools) {
 			Toolbar tb = Toolbar.getInstance();
-			if (toolCount==1) 
+			if (toolCount==1)
 				tb.addMacroTool((String)tools.get(0), this);
 			else {
 				for (int i=0; i<tools.size(); i++) {
@@ -183,6 +182,7 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 			if (toolCount>1 && Toolbar.getToolId()>=Toolbar.CUSTOM1)
 				tb.setTool(Toolbar.RECTANGLE);
 			tb.repaint();
+			installTools = false;
 		}
 		if (macrosMenu!=null)
 			this.instance = this;
@@ -224,10 +224,7 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 		this.text = text;
 		macrosMenu = menu;
 		install();
-		int count = nShortcuts+toolCount;
-		if (count==0 && nMacros>1)
-			count = nMacros;
-		return count;
+		return nShortcuts;
 	}
 
 	public void installFile(String path) {
@@ -236,7 +233,6 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 		boolean isStartupMacros = path.contains("StartupMacros");
 		if (isStartupMacros && !Toolbar.installStartupMacrosTools())
 			installTools = false;
-		//IJ.log("installFile: "+path+" "+isStartupMacros+" "+installTools);
 		install(text);
 		installTools = true;
 		if (isStartupMacros) {
@@ -257,9 +253,21 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 			if (text!=null)
 				Interpreter.setAdditionalFunctions(text);
 	}
-
+	
+	 /** Installs a macro set contained in ij.jar. */
+	public static void installFromJar(String path) {
+		try {
+			(new MacroInstaller()).installFromIJJar(path);
+		} catch (Exception e) {}
+	}
+	
 	 /** Installs a macro set contained in ij.jar. */
 	public void installFromIJJar(String path) {
+		boolean installMacros = false;
+		if (path.endsWith("MenuTool.txt+")) {
+			path = path.substring(0,path.length()-1);
+			installMacros = true;
+		}
 		String text = openFromIJJar(path);
 		if (text==null) return;
 		if (path.endsWith("StartupMacros.txt")) {
@@ -268,9 +276,9 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 			Toolbar tb = Toolbar.getInstance();
 			if (tb!=null)
 				tb.installStartupTools();
-		} else if (path.contains("Tools"))
+		} else if (path.contains("Tools") || installMacros) {
 			install(text);
-		else
+		} else
 			installSingleTool(text);
 	}
 
@@ -321,8 +329,13 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 		int len = shortcut.length();
 		if (len>1)
 			shortcut = shortcut.toUpperCase(Locale.US);;
-		if (len>3 || (len>1&&shortcut.charAt(0)!='F'&&shortcut.charAt(0)!='N'))
+		if (len>3 || (len>1 && shortcut.charAt(0)!='F' && shortcut.charAt(0)!='N' && shortcut.charAt(0)!='&'))
 			return;
+		boolean bothNumKeys = shortcut.startsWith("&");
+		if (bothNumKeys){ //first handle num key of keyboard
+			shortcut = shortcut.replace("&", "");
+			len = shortcut.length();
+		}			
 		int code = Menus.convertShortcutToCode(shortcut);
 		if (code==0)
 			return;
@@ -334,7 +347,12 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 			Hashtable macroShortcuts = Menus.getMacroShortcuts();
 			macroShortcuts.put(new Integer(code), commandPrefix+name);
 			nShortcuts++;
-			return;
+			if(!bothNumKeys)
+				return;
+		}
+		if(bothNumKeys){//now handle numerical keypad
+			shortcut = "N" + shortcut;
+			code = Menus.convertShortcutToCode(shortcut);
 		}
 		Hashtable shortcuts = Menus.getShortcuts();
 		if (shortcuts.get(new Integer(code))!=null) {
@@ -346,7 +364,6 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 		}
 		shortcuts.put(new Integer(code), commandPrefix+name);
 		nShortcuts++;
-		//IJ.log("addShortcut3: "+name+"	  "+shortcut+"	  "+code);
 	}
 	
 	 String showDialog() {
@@ -390,7 +407,6 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 		String text = null;
 		  try {
 			InputStream is = this.getClass().getResourceAsStream(path);
-			//IJ.log(is+"	"+path);
 			if (is==null) return null;
 				InputStreamReader isr = new InputStreamReader(is);
 				StringBuffer sb = new StringBuffer();
@@ -411,7 +427,6 @@ public class MacroInstaller implements PlugIn, MacroConstants, ActionListener {
 					return false; // do nothing if this tool is already running
 				MacroRunner mw = new MacroRunner(pgm, macroStarts[i], name, (String)null);
 				macroToolThread = mw.getThread();
-				//IJ.log("runMacroTool: "+macroToolThread);
 				return true;
 			}
 		}

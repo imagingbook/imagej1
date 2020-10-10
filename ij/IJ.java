@@ -24,11 +24,18 @@ import java.net.*;
 import javax.net.ssl.*;
 import java.security.cert.*;
 import java.security.KeyStore;
+import java.nio.ByteBuffer;
+import java.math.RoundingMode;
 
 
 /** This class consists of static utility methods. */
 public class IJ {
 
+	/** SansSerif, plain, 10-point font */
+	public static Font font10 = new Font("SansSerif", Font.PLAIN, 10);
+	/** SansSerif, plain, 12-point font */
+	public static Font font12 = ImageJ.SansSerif12;
+	
 	/** Image display modes */
 	public static final int COMPOSITE=1, COLOR=2, GRAYSCALE=3;
 	
@@ -71,6 +78,8 @@ public class IJ {
 	private static boolean trustManagerCreated;
 	private static String smoothMacro;
 	private static Interpreter macroInterpreter;
+	private static boolean protectStatusBar;
+	private static Thread statusBarThread;
 			
 	static {
 		osname = System.getProperty("os.name");
@@ -78,22 +87,22 @@ public class IJ {
 		isMac = !isWin && osname.startsWith("Mac");
 		isLinux = osname.startsWith("Linux");
 		String version = System.getProperty("java.version");
+		if (version==null || version.length()<2)
+			version = "1.8";
 		if (version.startsWith("1.8"))
 			javaVersion = 8;
+		else if (version.charAt(0)=='1' && Character.isDigit(version.charAt(1)))
+			javaVersion = 10 + (version.charAt(1) - '0');
+		else if (version.charAt(0)=='2' && Character.isDigit(version.charAt(1)))
+			javaVersion = 20 + (version.charAt(1) - '0');
 		else if (version.startsWith("1.6"))
 			javaVersion = 6;
 		else if (version.startsWith("1.9")||version.startsWith("9"))
 			javaVersion = 9;
-		else if (version.startsWith("10"))
-			javaVersion = 10;
-		else if (version.startsWith("11"))
-			javaVersion = 11;
-		else if (version.startsWith("12"))
-			javaVersion = 12;
 		else if (version.startsWith("1.7"))
 			javaVersion = 7;
 		else
-			javaVersion = 6;
+			javaVersion = 8;
 		dfs = new DecimalFormatSymbols(Locale.US);
 		df = new DecimalFormat[10];
 		df[0] = new DecimalFormat("0", dfs);
@@ -106,6 +115,7 @@ public class IJ {
 		df[7] = new DecimalFormat("0.0000000", dfs);
 		df[8] = new DecimalFormat("0.00000000", dfs);
 		df[9] = new DecimalFormat("0.000000000", dfs);
+		df[0].setRoundingMode(RoundingMode.HALF_UP);
 	}
 			
 	static void init(ImageJ imagej, Applet theApplet) {
@@ -129,20 +139,21 @@ public class IJ {
 		LogStream.redirectSystem(debugMode);
 	}
 
-	/** Runs the macro contained in the string <code>macro</code>.
-		Returns any string value returned by the macro, null if the macro
-		does not return a value, or "[aborted]" if the macro was aborted
-		due to an error. The equivalent macro function is eval(). */
+	/** Runs the macro contained in the string <code>macro</code>
+		on the current thread. Returns any string value returned by
+		the macro, null if the macro does not return a value, or
+		"[aborted]" if the macro was aborted due to an error. The
+		equivalent macro function is eval(). */
 	public static String runMacro(String macro) {
 		return runMacro(macro, "");
 	}
 
-	/** Runs the macro contained in the string <code>macro</code>.
-		The optional string argument can be retrieved in the
-		called macro using the getArgument() macro function. 
-		Returns any string value returned by the macro, null if the macro
-		does not return a value, or "[aborted]" if the macro was aborted
-		due to an error.  */
+	/** Runs the macro contained in the string <code>macro</code>
+		on the current thread. The optional string argument can be
+		retrieved in the called macro using the getArgument() macro
+		function. Returns any string value returned by the macro, null
+		if the macro does not return a value, or "[aborted]" if the
+		macro was aborted due to an error.  */
 	public static String runMacro(String macro, String arg) {
 		Macro_Runner mr = new Macro_Runner();
 		return mr.runMacro(macro, arg);
@@ -199,10 +210,11 @@ public class IJ {
 				((PlugIn)thePlugIn).run(arg);
  			else
 				new PlugInFilterRunner(thePlugIn, commandName, arg);
-		}
-		catch (ClassNotFoundException e) {
-			if (IJ.getApplet()==null)
-				log("Plugin or class not found: \"" + className + "\"\n(" + e+")");
+		} catch (ClassNotFoundException e) {
+			log("Plugin or class not found: \"" + className + "\"\n(" + e+")");
+			String path = Prefs.getCustomPropsPath();
+			if (path!=null);
+				log("Error may be due to custom properties at " + path);
 		}
 		catch (InstantiationException e) {log("Unable to load plugin (ins)");}
 		catch (IllegalAccessException e) {log("Unable to load plugin, possibly \nbecause it is not public.");}
@@ -231,7 +243,9 @@ public class IJ {
 				new PlugInFilterRunner(thePlugIn, commandName, arg);
 		}
 		catch (ClassNotFoundException e) {
-			if (className.contains("_")  && !suppressPluginNotFoundError)
+			if (className.startsWith("macro:"))
+				runMacro(className.substring(6));
+			else if (className.contains("_")  && !suppressPluginNotFoundError)
 				error("Plugin or class not found: \"" + className + "\"\n(" + e+")");
 		}
 		catch (NoClassDefFoundError e) {
@@ -334,9 +348,6 @@ public class IJ {
 			commandTable.put("Convert Stack to Images", "Stack to Images");
 			commandTable.put("Convert Stack to RGB", "Stack to RGB");
 			commandTable.put("Convert to Composite", "Make Composite");
-			commandTable.put("New HyperStack...", "New Hyperstack...");
-			commandTable.put("Stack to HyperStack...", "Stack to Hyperstack...");
-			commandTable.put("HyperStack to Stack", "Hyperstack to Stack");
 			commandTable.put("RGB Split", "Split Channels");
 			commandTable.put("RGB Merge...", "Merge Channels...");
 			commandTable.put("Channels...", "Channels Tool...");
@@ -353,6 +364,35 @@ public class IJ {
 			commandTable.put("Statistics...", "Statistics");
 			commandTable.put("Channels Tool... ", "Channels Tool...");
 			commandTable.put("Profile Plot Options...", "Plots...");
+			commandTable.put("AuPbSn 40 (56K)", "AuPbSn 40");
+			commandTable.put("Bat Cochlea Volume (19K)", "Bat Cochlea Volume");
+			commandTable.put("Bat Cochlea Renderings (449K)", "Bat Cochlea Renderings");
+			commandTable.put("Blobs (25K)", "Blobs");
+			commandTable.put("Boats (356K)", "Boats");			
+			commandTable.put("Cardio (768K, RGB DICOM)", "Cardio (RGB DICOM)");
+			commandTable.put("Cell Colony (31K)", "Cell Colony");
+			commandTable.put("Clown (14K)", "Clown");
+			commandTable.put("Confocal Series (2.2MB)", "Confocal Series");
+			commandTable.put("CT (420K, 16-bit DICOM)", "CT (16-bit DICOM)");			
+			commandTable.put("Dot Blot (7K)", "Dot Blot");
+			commandTable.put("Embryos (42K)", "Embryos");
+			commandTable.put("Fluorescent Cells (400K)", "Fluorescent Cells");
+			commandTable.put("Fly Brain (1MB)", "Fly Brain");			
+			commandTable.put("Gel (105K)", "Gel");
+			commandTable.put("HeLa Cells (1.3M, 48-bit RGB)", "HeLa Cells (48-bit RGB)");
+			commandTable.put("Leaf (36K)", "Leaf");
+			commandTable.put("Line Graph (21K)", "Line Graph");			
+			commandTable.put("Mitosis (26MB, 5D stack)", "Mitosis (5D stack)");
+			commandTable.put("MRI Stack (528K)", "MRI Stack");
+			commandTable.put("M51 Galaxy (177K, 16-bits)", "M51 Galaxy (16-bits))");
+			commandTable.put("Neuron (1.6M, 5 channels", "Neuron (5 channels");
+			commandTable.put("Nile Bend (1.9M)", "Nile Bend");			
+			commandTable.put("Organ of Corti (2.8M, 4D stack)", "Organ of Corti (4D stack)");
+			commandTable.put("Particles (75K)", "Particles");
+			commandTable.put("T1 Head (2.4M, 16-bits)", "T1 Head (16-bits)");
+			commandTable.put("T1 Head Renderings (736K)", "T1 Head Renderings");
+			commandTable.put("TEM Filter (112K)", "TEM Filter");
+			commandTable.put("Tree Rings (48K)", "Tree Rings");
 		}
 		String command2 = (String)commandTable.get(command);
 		if (command2!=null)
@@ -403,16 +443,29 @@ public class IJ {
 		return applet;
 	}
 	
-	/**Displays a message in the ImageJ status bar.*/
+	/**Displays a message in the ImageJ status bar. If 's' starts 
+		with '!', subsequent showStatus() calls in the current
+		thread (without "!" in the message) are suppressed. */
 	public static void showStatus(String s) {
-		if (ij!=null)
-			ij.showStatus(s);
-		ImagePlus imp = WindowManager.getCurrentImage();
-		ImageCanvas ic = imp!=null?imp.getCanvas():null;
-		if (ic!=null)
-			ic.setShowCursorStatus(s.length()==0?true:false);
+		if ((Interpreter.getInstance()==null&&statusBarThread==null)
+		|| (statusBarThread!=null&&Thread.currentThread()!=statusBarThread))
+			protectStatusBar(false);
+		boolean doProtect = s.startsWith("!"); // suppress subsequent showStatus() calls
+		if (doProtect) {
+			protectStatusBar(true);
+			statusBarThread = Thread.currentThread();
+			s = s.substring(1);
+		}
+		if (doProtect || !protectStatusBar) {
+			if (ij!=null)
+				ij.showStatus(s);
+			ImagePlus imp = WindowManager.getCurrentImage();
+			ImageCanvas ic = imp!=null?imp.getCanvas():null;
+			if (ic!=null)
+				ic.setShowCursorStatus(s.length()==0?true:false);
+		}
 	}
-
+	
 	/**
 	* @deprecated
 	* replaced by IJ.log(), ResultsTable.setResult() and TextWindow.append().
@@ -561,8 +614,51 @@ public class IJ {
 		'row1' and 'row2' must be in the range 0-Analyzer.getCounter()-1. */
 	public static void deleteRows(int row1, int row2) {
 		ResultsTable rt = Analyzer.getResultsTable();
+		int tableSize = rt.size();
 		rt.deleteRows(row1, row2);
+		ImagePlus imp = WindowManager.getCurrentImage();
+		if (imp!=null)
+			Overlay.updateTableOverlay(imp, row1, row2, tableSize);
 		rt.show("Results");
+	}
+	
+	/** Returns a measurement result, where 'measurement' is "Area", 
+	 * "Mean", "StdDev", "Mode", "Min", "Max", "X", "Y", "XM", "YM",
+	 * "Perim.", "BX", "BY", "Width", "Height", "Major", "Minor", "Angle",
+	 * "Circ.", "Feret", "IntDen", "Median", "Skew", "Kurt", "%Area",
+	 * "RawIntDen", "Ch", "Slice", "Frame", "FeretX", "FeretY",
+	 * "FeretAngle", "MinFeret", "AR", "Round", "Solidity", "MinThr"
+	 * or "MaxThr". Add " raw" to the argument to disable calibration,
+	 * for example IJ.getValue("Mean raw"). Add " limit" to enable
+	 * the "limit to threshold" option.
+	*/
+	public static double getValue(ImagePlus imp, String measurement) {
+		String options = "";
+		int index = measurement.indexOf(" ");
+		if (index>0) {
+			if (index<measurement.length()-1)
+				options = measurement.substring(index+1, measurement.length());
+			measurement = measurement.substring(0, index);
+		}
+		int measurements = Measurements.ALL_STATS + Measurements.SLICE;
+		if (options.contains("limit"))
+			measurements += Measurements.LIMIT;
+		Calibration cal = null;
+		if (options.contains("raw")) {
+			cal = imp.getCalibration();
+			imp.setCalibration(null);
+		}
+		ImageStatistics stats = imp.getStatistics(measurements);
+		ResultsTable rt = new ResultsTable();
+		Analyzer analyzer = new Analyzer(imp, measurements, rt);
+		analyzer.saveResults(stats, imp.getRoi());
+		double value = Double.NaN;
+		try {
+			value = rt.getValue(measurement, 0);
+		} catch (Exception e) {};
+		if (cal!=null)
+			imp.setCalibration(cal);
+		return value;
 	}
 
 	/** Returns a reference to the "Results" window TextPanel.
@@ -581,7 +677,7 @@ public class IJ {
     
     /**Displays a "no images are open" dialog box.*/
 	public static void noImage() {
-		String msg = "There are no images open.";
+		String msg = "There are no images open";
 		if (macroInterpreter!=null) {
 			macroInterpreter.abort(msg);
 			macroInterpreter = null;
@@ -647,7 +743,7 @@ public class IJ {
 				if (isMacro() && hd.escapePressed())
 					throw new RuntimeException(Macro.MACRO_CANCELED);
 			} else {
-				MessageDialog md = new MessageDialog(ij, title, msg);
+				MessageDialog md = new MessageDialog(ij, title, msg); 
 				if (isMacro() && md.escapePressed())
 					throw new RuntimeException(Macro.MACRO_CANCELED);
 			}
@@ -659,11 +755,6 @@ public class IJ {
 		macro or JavaScript is running, it is aborted. Writes to the
 		Java console if the ImageJ window is not present.*/
 	public static void error(String msg) {
-		if (macroInterpreter!=null) {
-			macroInterpreter.abort(msg);
-			macroInterpreter = null;
-			return;
-		}
 		error(null, msg);
 		if (Thread.currentThread().getName().endsWith("JavaScript"))
 			throw new RuntimeException(Macro.MACRO_CANCELED);
@@ -675,6 +766,11 @@ public class IJ {
 		macro or JavaScript is running, it is aborted. Writes to the
 		Java console if the ImageJ window is not present. */
 	public static void error(String title, String msg) {
+		if (macroInterpreter!=null) {
+			macroInterpreter.abort(msg);
+			macroInterpreter = null;
+			return;
+		}
 		if (msg!=null && msg.endsWith(Macro.MACRO_CANCELED))
 			return;
 		String title2 = title!=null?title:"ImageJ";
@@ -759,10 +855,11 @@ public class IJ {
 		java.awt.Toolkit.getDefaultToolkit().beep();
 	}
 	
-	/**	Runs the garbage collector and returns a string something
-		like "64K of 256MB (25%)" that shows how much of 
-		the  available memory is in use. This is the string
-		displayed when the user clicks in the status bar. */
+	/**	Returns a string something like "64K of 256MB (25%)"
+	 * that shows how much of  the  available memory is in use.
+	 * This is the string displayed when the user clicks in the
+	 * status bar.
+	*/
 	public static String freeMemory() {
 		long inUse = currentMemory();
 		String inUseStr = inUse<10000*1024?inUse/1024L+"K":inUse/1048576L+"MB";
@@ -798,8 +895,11 @@ public class IJ {
 	}
 	
 	public static void showTime(ImagePlus imp, long start, String str, int nslices) {
-		if (Interpreter.isBatchMode()) return;
-	    double seconds = (System.currentTimeMillis()-start)/1000.0;
+		if (Interpreter.isBatchMode())
+			return;
+		double seconds = (System.currentTimeMillis()-start)/1000.0;
+		if (seconds<=0.5 && macroRunning())
+			return;
 		double pixels = (double)imp.getWidth() * imp.getHeight();
 		double rate = pixels*nslices/seconds;
 		String str2;
@@ -891,6 +991,14 @@ public class IJ {
 		return str;
 	}
 
+	/** Pad 's' with leading zeros to the specified number of digits. */
+	public static String pad(String s, int digits) {
+		String str = ""+s;
+		while (str.length()<digits)
+			str = "0"+str;
+		return str;
+	}
+
 	/** Adds the specified class to a Vector to keep it from being garbage
 	collected, which would cause the classes static fields to be reset. 
 	Probably not needed with Java 1.2 or later. */
@@ -938,7 +1046,7 @@ public class IJ {
 			case KeyEvent.VK_SPACE: {
 				spaceDown=true;
 				ImageWindow win = WindowManager.getCurrentWindow();
-				if (win!=null) win.getCanvas().setCursor(-1,-1,-1, -1);
+				//if (win!=null) win.getCanvas().setCursor(-1,-1,-1, -1);
 				break;
 			}
 			case KeyEvent.VK_ESCAPE: {
@@ -958,7 +1066,7 @@ public class IJ {
 			case KeyEvent.VK_SPACE:
 				spaceDown=false;
 				ImageWindow win = WindowManager.getCurrentWindow();
-				if (win!=null) win.getCanvas().setCursor(-1,-1,-1,-1);
+				//if (win!=null) win.getCanvas().setCursor(-1,-1,-1,-1);
 				break;
 			case ALL_KEYS:
 				shiftDown=controlDown=altDown=spaceDown=false;
@@ -1550,7 +1658,7 @@ public class IJ {
 					if (EventQueue.isDispatchThread())
 						new MacroRunner(smoothMacro); // run on separate thread
 					else
-						IJ.runMacro(smoothMacro);
+						Macro.eval(smoothMacro);
 				}
 			}
 		}
@@ -1605,6 +1713,14 @@ public class IJ {
 		return img;
 	}
 	
+	/**The macro interpreter uses this method to call getImage().*/
+	public static ImagePlus getImage(Interpreter interpreter) {
+		macroInterpreter = interpreter;
+		ImagePlus imp =  getImage();
+		macroInterpreter = null;
+		return imp;
+	}
+	
 	/** Returns the active image or stack slice as an ImageProcessor, or displays
 		an error message and aborts the plugin or macro if no images are open. */
 	public static ImageProcessor getProcessor() {
@@ -1632,60 +1748,71 @@ public class IJ {
 			build = "0" + build;
 		return ImageJ.VERSION+build;
 	}
-
-	/** Returns the path to the home ("user.home"), startup, ImageJ, plugins, macros, 
-		luts, temp, current or image directory if <code>title</code> is "home", "startup", 
-		"imagej", "plugins", "macros", "luts", "temp", "current", "default", "image", otherwise, 
-		displays a dialog and returns the path to the directory selected by the user. 
-		Returns null if the specified directory is not found or the user
-		cancels the dialog box. Also aborts the macro if the user cancels
+		
+	/** Returns the path to the specified directory if <code>title</code> is
+		"home" ("user.home"), "downloads", "startup",  "imagej" (ImageJ directory),
+		"plugins", "macros", "luts", "temp", "current", "default",
+		"image" (directory active image was loaded from) or "file" 
+		(directory most recently used to open or save a file),
+		otherwise displays a dialog and returns the path to the
+		directory selected by the user. Returns null if the specified
+		directory is not found or the user cancels the dialog box.
+		Also aborts the macro if the user cancels
 		the dialog box.*/
 	public static String getDirectory(String title) {
+		String dir = null;
 		String title2 = title.toLowerCase(Locale.US);
 		if (title2.equals("plugins"))
-			return Menus.getPlugInsPath();
+			dir = Menus.getPlugInsPath();
 		else if (title2.equals("macros"))
-			return Menus.getMacrosPath();
+			dir = Menus.getMacrosPath();
 		else if (title2.equals("luts")) {
 			String ijdir = Prefs.getImageJDir();
 			if (ijdir!=null)
-				return ijdir + "luts" + File.separator;
+				dir = ijdir + "luts" + File.separator;
 			else
-				return null;
+				dir = null;
 		} else if (title2.equals("home"))
-			return System.getProperty("user.home") + File.separator;
+			dir = System.getProperty("user.home");
+		else if (title2.equals("downloads"))
+			dir = System.getProperty("user.home")+File.separator+"Downloads";
 		else if (title2.equals("startup"))
-			return Prefs.getImageJDir();
+			dir = Prefs.getImageJDir();
 		else if (title2.equals("imagej"))
-			return Prefs.getImageJDir();
+			dir = Prefs.getImageJDir();
 		else if (title2.equals("current") || title2.equals("default"))
-			return OpenDialog.getDefaultDirectory();
+			dir = OpenDialog.getDefaultDirectory();
 		else if (title2.equals("temp")) {
-			String dir = System.getProperty("java.io.tmpdir");
+			dir = System.getProperty("java.io.tmpdir");
 			if (isMacintosh()) dir = "/tmp/";
-			if (dir!=null && !dir.endsWith(File.separator))
-				dir += File.separator;
-			return dir;
 		} else if (title2.equals("image")) {
 			ImagePlus imp = WindowManager.getCurrentImage();
-	    	FileInfo fi = imp!=null?imp.getOriginalFileInfo():null;
+			FileInfo fi = imp!=null?imp.getOriginalFileInfo():null;
 			if (fi!=null && fi.directory!=null) {
-				String dir = fi.directory;
-				if (dir!=null && !(dir.endsWith(File.separator)||dir.endsWith("/"))) {
-					if (IJ.isWindows()&&dir.contains(File.separator))
-						dir += File.separator;
-					else
-						dir += "/";
-				}
-				return dir;
+				dir = fi.directory;
 			} else
-				return null;
+				dir = null;
+		} else if (title2.equals("file")) {
+			dir = OpenDialog.getLastDirectory();
 		} else {
 			DirectoryChooser dc = new DirectoryChooser(title);
-			String dir = dc.getDirectory();
+			dir = dc.getDirectory();
 			if (dir==null) Macro.abort();
-			return dir;
 		}
+		dir = addSeparator(dir);
+		return dir;
+	}
+	
+	public static String addSeparator(String path) {
+		if (path==null)
+			return null;
+		if (path.length()>0 && !(path.endsWith(File.separator)||path.endsWith("/"))) {
+			if (IJ.isWindows()&&path.contains(File.separator))
+				path += File.separator;
+			else
+				path += "/";
+		}
+		return path;
 	}
 		
 	/** Alias for getDirectory(). */
@@ -1930,9 +2057,9 @@ public class IJ {
 		} else if (format.indexOf("lut")!=-1) {
 			path = updateExtension(path, ".lut");
 			format = "LUT...";
-		} else if (format.indexOf("results")!=-1 || format.indexOf("measurements")!=-1) {
+		} else if (format.contains("results") || format.contains("measurements") || format.contains("table")) {
 			format = "Results...";
-		} else if (format.indexOf("selection")!=-1 || format.indexOf("roi")!=-1) {
+		} else if (format.contains("selection") || format.contains("roi")) {
 			path = updateExtension(path, ".roi");
 			format = "Selection...";
 		} else if (format.indexOf("xy")!=-1 || format.indexOf("coordinates")!=-1) {
@@ -2050,6 +2177,34 @@ public class IJ {
 			str = "Error: "+e.getMessage();
 		}
 		return str;
+	}
+	
+	public static ByteBuffer openAsByteBuffer(String path) {
+		if (path==null || path.equals("")) {
+			OpenDialog od = new OpenDialog("Open as ByteBuffer", "");
+			String directory = od.getDirectory();
+			String name = od.getFileName();
+			if (name==null) return null;
+			path = directory + name;
+		}
+		File file = new File(path);
+		if (!file.exists()) {
+			error("OpenAsByteBuffer", "File not found");
+			return null;
+		}
+		int len = (int)file.length();
+		byte[] buffer = new byte[len];
+		try {
+			InputStream in = new BufferedInputStream(new FileInputStream(path));
+			DataInputStream dis = new DataInputStream(in);
+			dis.readFully(buffer);
+			dis.close();
+		}
+		catch (Exception e) {
+			error("OpenAsByteBuffer", e.getMessage());
+			return null;
+		}
+		return ByteBuffer.wrap(buffer);
 	}
 
 	/** Creates a new image.
@@ -2213,26 +2368,16 @@ public class IJ {
 	
 	/** Returns the size, in pixels, of the primary display. */
 	public static Dimension getScreenSize() {
-		Rectangle bounds = GUI.getZeroBasedMaxBounds();
-		if (bounds!=null)
-			return new Dimension(bounds.width, bounds.height);
-		if (isWindows())  // GraphicsEnvironment.getConfigurations is *very* slow on Windows
-			return Toolkit.getDefaultToolkit().getScreenSize();
-		if (GraphicsEnvironment.isHeadless())
-			return new Dimension(0, 0);
-		// Can't use Toolkit.getScreenSize() on Linux because it returns 
-		// size of all displays rather than just the primary display.
-		GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
-		GraphicsDevice[] gd = ge.getScreenDevices();
-		GraphicsConfiguration[] gc = gd[0].getConfigurations();
-		bounds = gc[0].getBounds();
-		if ((bounds.x==0&&bounds.y==0) || (IJ.isLinux()&&gc.length>1))
-			return new Dimension(bounds.width, bounds.height);
-		else
-			return Toolkit.getDefaultToolkit().getScreenSize();
+		Rectangle bounds = GUI.getScreenBounds();
+		return new Dimension(bounds.width, bounds.height);
 	}
 	
-	/** Returns, as an array of strings, a list of the LUTs in the Image/Lookup Tables menu. */
+	/** Returns, as an array of strings, a list of the LUTs in the 
+	 * Image/Lookup Tables menu.
+	 * @see ij.plugin#LutLoader.getLut
+	 * See also: Help>Examples>JavaScript/Show all LUTs
+	 * and Image/Color/Display LUTs
+	*/
 	public static String[] getLuts() {
 		ArrayList list = new ArrayList();
 		Hashtable commands = Menus.getCommands();
@@ -2339,4 +2484,14 @@ public class IJ {
 			return properties.get(key);
 	}
 	
+	public static boolean statusBarProtected() {
+		return protectStatusBar;
+	}
+	
+	public static void protectStatusBar(boolean protect) {
+		protectStatusBar = protect;
+		if (!protectStatusBar)
+			statusBarThread = null;
+	}
+
 }

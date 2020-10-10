@@ -4,7 +4,8 @@ import ij.gui.*;
 import ij.process.*;
 import ij.io.*;
 import ij.plugin.filter.*;
-import ij.plugin.frame.LineWidthAdjuster;
+import ij.plugin.frame.*;
+import ij.measure.ResultsTable;
 import java.awt.*;
 
 /** This plugin implements most of the commands
@@ -12,6 +13,8 @@ import java.awt.*;
 public class Options implements PlugIn {
 
  	public void run(String arg) {
+		if (arg.equals("fresh-start"))
+			{freshStart(); return;}
 		if (arg.equals("misc"))
 			{miscOptions(); return;}
 		else if (arg.equals("line"))
@@ -43,6 +46,7 @@ public class Options implements PlugIn {
 			gd.addCheckbox("Don't set Mac menu bar", !Prefs.setIJMenuBar);
 		if (IJ.isLinux())
 			gd.addCheckbox("Save window locations", !Prefs.doNotSaveWindowLocations);
+		gd.addCheckbox("Non-blocking filter dialogs", Prefs.nonBlockingFilterDialogs);
 		gd.addCheckbox("Debug mode", IJ.debugMode);
 		gd.addHelp(IJ.URL+"/docs/menus/edit.html#misc");
 		gd.showDialog();
@@ -77,6 +81,7 @@ public class Options implements PlugIn {
 			Prefs.setIJMenuBar = !gd.getNextBoolean();
 		if (IJ.isLinux())
 			Prefs.doNotSaveWindowLocations = !gd.getNextBoolean();
+		Prefs.nonBlockingFilterDialogs = gd.getNextBoolean();
 		IJ.setDebugMode(gd.getNextBoolean());
 	}
 
@@ -141,6 +146,7 @@ public class Options implements PlugIn {
 		Prefs.copyColumnHeaders = gd.getNextBoolean();
 		Prefs.noRowNumbers = !gd.getNextBoolean();
 		Prefs.dontSaveHeaders = !gd.getNextBoolean();
+		ResultsTable.getResultsTable().saveColumnHeaders(!Prefs.dontSaveHeaders);
 		Prefs.dontSaveRowNumbers = !gd.getNextBoolean();
 		return;
 	}
@@ -176,7 +182,7 @@ public class Options implements PlugIn {
 	void dicom() {
 		GenericDialog gd = new GenericDialog("DICOM Options");
 		gd.addCheckbox("Open as 32-bit float", Prefs.openDicomsAsFloat);
-		gd.addCheckbox("Ignore Rescale Slope and open as 16-bit", Prefs.ignoreRescaleSlope);
+		gd.addCheckbox("Ignore Rescale Slope", Prefs.ignoreRescaleSlope);
 		gd.addMessage("Orthogonal Views");
 		gd.setInsets(5, 40, 0);
 		gd.addCheckbox("Rotate YZ", Prefs.rotateYZ);
@@ -190,7 +196,40 @@ public class Options implements PlugIn {
 		Prefs.rotateYZ = gd.getNextBoolean();
 		Prefs.flipXZ = gd.getNextBoolean();
 	}
-	
+		
+	/** Close all images, empty ROI Manager, clear the
+		 Results table, clears the Log window and sets
+		 "Black background" 'true'.
+	*/
+	private void freshStart() {
+		String options = Macro.getOptions();
+		boolean keepImages = false;
+		boolean keepResults = false;
+		boolean keepRois = false;
+		if (options!=null) {
+			options = options.toLowerCase();
+			keepImages = options.contains("images");			
+			keepResults = options.contains("results");			
+			keepRois = options.contains("rois");
+		}
+		if (!keepImages) {
+			if (!Commands.closeAll())
+				return;
+		}
+		if (!keepResults) {
+			if (!Analyzer.resetCounter())
+				return;
+		}
+		if (!keepRois) {
+			RoiManager rm = RoiManager.getInstance();
+			if (rm!=null)
+				rm.reset();
+		}
+		if (WindowManager.getWindow("Log")!=null)
+   			IJ.log("\\Clear");
+		Prefs.blackBackground = true;
+	}
+
 	// Delete preferences file when ImageJ quits
 	private void reset() {
 		if (IJ.showMessageWithCancel("Reset Preferences", "Preferences will be reset when ImageJ restarts."))

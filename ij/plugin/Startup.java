@@ -14,10 +14,13 @@ import java.util.Vector;
 		private static final String[] code = {
 			"[Select from list]",
 			"Black background",
-			"Add to overlay",
+			"Set default directory",
 			"Debug mode",
 			"10-bit (0-1023) range",
-			"12-bit (0-4095) range"
+			"12-bit (0-4095) range",
+			"Splash Screen",
+			"Bolder selections",
+			"Add to overlay"
 		};
 	private String macro = "";
 	private int originalLength;
@@ -53,7 +56,7 @@ import java.util.Vector;
 		gd.setInsets(5,15,0);
 		gd.addMessage(text, font);
 		gd.setInsets(5, 10, 0);
-		gd.addTextAreas(macro, null, 12, 50);
+		gd.addTextAreas(macro, null, 15, 50);
 		gd.addChoice("Add code:", code, code[0]);
 		Vector choices = gd.getChoices();
 		if (choices!=null) {
@@ -80,14 +83,20 @@ import java.util.Vector;
 		String statement = null;
 		if (item.equals(code[1]))
 			statement = "setOption(\"BlackBackground\", true);\n";
-		else if (item.equals(code[2]))
-			statement = "setOption(\"Add to overlay\", true);\n";
+		else if (item.equals(code[2]))			
+			statement = "File.setDefaultDir(getDir(\"downloads\"));\n";
 		else if (item.equals(code[3]))
 			statement = "setOption(\"DebugMode\", true);\n";
 		else if (item.equals(code[4]))
 			statement = "call(\"ij.ImagePlus.setDefault16bitRange\", 10);\n";
 		else if (item.equals(code[5]))
 			statement = "call(\"ij.ImagePlus.setDefault16bitRange\", 12);\n";
+		else if (item.equals(code[6]))			
+			statement = "run(\"About ImageJ...\");\nwait(3000);\nclose(\"About ImageJ\");\n";
+		else if (item.equals(code[7]))			
+			statement = "Roi.setDefaultStrokeWidth(2);\n";
+		else if (item.equals(code[8]))
+			statement = "setOption(\"Add to overlay\", true);\n";
 		if (statement!=null) {
 			TextArea ta = gd.getTextArea1();
 			ta.insert(statement, ta.getCaretPosition());

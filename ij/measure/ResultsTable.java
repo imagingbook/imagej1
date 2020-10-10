@@ -11,6 +11,7 @@ import java.awt.*;
 import java.text.*;
 import java.util.*;
 import java.io.*;
+import java.math.RoundingMode;
 
 
 /** This is a table for storing measurement results and strings as columns of values. 
@@ -57,11 +58,15 @@ public class ResultsTable implements Cloneable {
 	private char delimiter = '\t';
 	private boolean headingSet; 
 	private boolean showRowNumbers;
+	private boolean showRowNumbersSet;
+	private int baseRowNumber = 1;
 	private Hashtable stringColumns;
 	private boolean NaNEmptyCells;
 	private boolean quoteCommas;
 	private String title;
 	private boolean columnDeleted;
+	private boolean renameWhenSaving;
+	private boolean saveColumnHeaders = !Prefs.dontSaveHeaders;
 
 
 	/** Constructs an empty ResultsTable with the counter=0, no columns
@@ -92,7 +97,16 @@ public class ResultsTable implements Cloneable {
 		return Analyzer.getResultsTable();
 	}
 		
-	/** Returns the "Results" TextWindow. */
+	/** Returns the ResultsTable with the specified title, or null if it does not exist, */
+	public static ResultsTable getResultsTable(String title) {
+		Frame f = WindowManager.getFrame(title);
+		if (f!=null && (f instanceof TextWindow))
+			return ((TextWindow)f).getResultsTable();
+		else
+			return null;
+	}
+		
+	/** Obsolete. */
 	public static TextWindow getResultsWindow() {
 		Frame f = WindowManager.getFrame("Results");
 		if (f==null || !(f instanceof TextWindow))
@@ -101,7 +115,12 @@ public class ResultsTable implements Cloneable {
 			return (TextWindow)f;
 	}
 
-	/** Increments the measurement counter by one. */
+	/** Adds a row to the table. */
+	public void addRow() {
+		incrementCounter();
+	}
+
+	/** Adds a row to the table. */
 	public synchronized void incrementCounter() {
 		counter++;
 		if (counter==maxRows) {
@@ -155,14 +174,21 @@ public class ResultsTable implements Cloneable {
 		return counter;
 	}
 
-	/** Adds a value to the end of the given column. */
+	/** Adds a numeric value to the specified column, on the last
+	 * table row. Use addRow() to add another row to
+	 * the table.
+	 * @see #addRow
+	 * @see #addValue(String,double)
+	 * @see #addValue(String,String)
+	 * @see #size
+	*/
 	public void addValue(int column, double value) {
 		if (column>=maxColumns)
 			addColumns();
 		if (column<0 || column>=maxColumns)
 			throw new IllegalArgumentException("Column out of range");
 		if (counter==0)
-			throw new IllegalArgumentException("Counter==0");
+			incrementCounter();
 		if (columns[column]==null) {
 			columns[column] = new double[maxRows];
 			if (NaNEmptyCells)
@@ -178,11 +204,24 @@ public class ResultsTable implements Cloneable {
 		}
 	}
 	
-	/** Adds a value to the end of the given column. If the column
-		does not exist, it is created.
-		There is an example at:<br>
-		http://imagej.nih.gov/ij/plugins/sine-cosine.html
-	*/
+	/** Adds a numeric value to the specified column, on the last
+	 * table row. If the column does not exist, it is created.
+	 * Use addRow() to add another row to the table.
+	 * <p>JavaScript example:
+	 * <pre>
+	 * rt = new ResultsTable();
+	 * for (n=0; n<=2*Math.PI; n+=0.1) {
+	 *    rt.addRow();
+	 *    rt.addValue("n", n);
+	 *    rt.addValue("Sine(n)", Math.sin(n));
+	 *    rt.addValue("Cos(n)", Math.cos(n));
+	 * }
+	 * rt.show("Sine/Cosine Table");
+	 * <pre>
+	 * @see #addRow
+	 * @see #addValue(String,String)
+	 * @see #size
+	 */
 	public void addValue(String column, double value) {
 		if (column==null)
 			throw new IllegalArgumentException("Column is null");
@@ -193,8 +232,13 @@ public class ResultsTable implements Cloneable {
 		keep[index] = true;
 	}
 	
-	/** Adds a string value to the end of the given column. If the column
-		does not exist, it is created. */
+	/** Adds a string value to the specified column, on the last
+	 * table row. If the column does not exist, it is created.
+	 * Use addRow() to add another row to the table.
+	 * @see #addRow
+	 * @see #addValue(String,double)
+	 * @see #size
+	 */
 	public void addValue(String column, String value) {
 		if (column==null)
 			throw new IllegalArgumentException("Column is null");
@@ -583,7 +627,7 @@ public class ResultsTable implements Cloneable {
 		else
 			sb.setLength(0);
 		if (showRowNumbers) {
-			sb.append(Integer.toString(row+1));
+			sb.append(Integer.toString(row+baseRowNumber));
 			sb.append(delimiter);
 		}
 		if (rowLabels!=null) {
@@ -612,8 +656,17 @@ public class ResultsTable implements Cloneable {
 	
 	/** Implements the Table.getColumn() macro function. */
 	public Variable[] getColumnAsVariables(String column) {
+		if ("Label".equals(column) && rowLabels!=null) {
+			int n = size();
+			Variable[] labels = new Variable[n];
+			for (int i=0; i<n; i++) {
+				String label = getLabel(i);
+				labels[i] = new Variable(label!=null?label:"");
+			}
+			return labels;
+		}
 		int col = getColumnIndex(column);
-		if (col==COLUMN_NOT_FOUND)
+		if (col==COLUMN_NOT_FOUND || columns[col]==null)
 			throw new IllegalArgumentException("\""+column+"\" column not found");
 		boolean firstValueNumeric = true;
 		int nValues = size();
@@ -677,7 +730,7 @@ public class ResultsTable implements Cloneable {
 			}
 		}
 	}
-	
+		
 	private String getValueAsString(int column, int row) { 
 		double value = columns[column][row];
 		//IJ.log("getValueAsString1: col="+column+ ", row= "+row+", value= "+value+", size="+stringColumns.size());
@@ -760,6 +813,17 @@ public class ResultsTable implements Cloneable {
 
 	public void showRowNumbers(boolean showNumbers) {
 		showRowNumbers = showNumbers;
+		baseRowNumber = 1;
+		showRowNumbersSet = true;
+	}
+
+	public void showRowIndexes(boolean showIndexes) {
+		showRowNumbers = showIndexes;
+		baseRowNumber = showIndexes?0:1;
+	}
+
+	public void saveColumnHeaders(boolean save) {
+		saveColumnHeaders = save;
 	}
 
 	private static DecimalFormat[] df;
@@ -812,6 +876,7 @@ public class ResultsTable implements Cloneable {
 			df[7] = new DecimalFormat("0.0000000", dfs);
 			df[8] = new DecimalFormat("0.00000000", dfs);
 			df[9] = new DecimalFormat("0.000000000", dfs);
+			df[0].setRoundingMode(RoundingMode.HALF_UP);
 		}
 		return df[decimalPlaces].format(n);
 	}
@@ -916,11 +981,15 @@ public class ResultsTable implements Cloneable {
 		The title must be "Results" if this table was obtained using 
 		ResultsTable.getResultsTable() or Analyzer.getResultsTable . */
 	public void show(String windowTitle) {
+		if  (GraphicsEnvironment.isHeadless())
+			return; // Tables can't be displayed in headless mode
 		if (windowTitle==null)
 			windowTitle = "Results";
 		title = windowTitle;
 		if (!windowTitle.equals("Results") && this==Analyzer.getResultsTable())
 			IJ.log("ResultsTable.show(): the system ResultTable should only be displayed in the \"Results\" window.");
+		if (windowTitle.equals("Results") && !showRowNumbersSet)
+			showRowNumbers(true);
 		String tableHeadings = getColumnHeadings();		
 		TextPanel tp;
 		boolean newWindow = false;
@@ -1056,6 +1125,8 @@ public class ResultsTable implements Cloneable {
 		String text = IJ.openAsString(path);
 		if (text==null)
 			return null;
+		if (text.length()==0)
+			return new ResultsTable();
 		if (text.startsWith("Error:"))
 			throw new IOException("Error opening "+path);
 		boolean csv = path.endsWith(".csv") || path.endsWith(".CSV");
@@ -1067,10 +1138,10 @@ public class ResultsTable implements Cloneable {
 		}
 		String commaSubstitute2 = ""+commaSubstitute;
 		String[] lines = text.split(lineSeparator);
-		if (lines.length==0)
+		if (lines.length==0 || (lines.length==1 && lines[0].length()==0))
 			throw new IOException("Table is empty or invalid");
 		String[] headings = lines[0].split(cellSeparator);
-		if (headings.length==1)
+		if (headings.length<1)
 			throw new IOException("This is not a tab or comma delimited text file.");
 		int numbersInHeadings = 0;
 		for (int i=0; i<headings.length; i++) {
@@ -1105,17 +1176,26 @@ public class ResultsTable implements Cloneable {
 			firstColumn = 1;
 		}
 		ResultsTable rt = new ResultsTable();
-		rt.showRowNumbers(true);
+		if (firstRow>=lines.length) { //empty table?
+			for (int i=0; i<headings.length; i++) {
+				if (headings[i]==null) continue;
+				int col = rt.getColumnIndex(headings[i]);
+				if (col==COLUMN_NOT_FOUND)
+					col = rt.getFreeColumn(headings[i]);
+			}
+			return rt;
+		}
+		rt.showRowNumbers(path.contains("Results"));
 		for (int i=firstRow; i<lines.length; i++) {
 			rt.incrementCounter();
-			String[] items=lines[i].split(cellSeparator);
-			for (int j=firstColumn; j<items.length; j++) {
+			String[] items = lines[i].split(cellSeparator);
+			for (int j=firstColumn; j<headings.length; j++) {
 				if (j==labelsIndex&&labels)
 					rt.addLabel(headings[labelsIndex], items[labelsIndex]);
-				else if (j<headings.length) {
-					double value = Tools.parseDouble(items[j]);
+				else {
+					double value = j<items.length?Tools.parseDouble(items[j]):Double.NaN;
 					if (Double.isNaN(value)) {
-						String item = items[j];
+						String item = j<items.length?items[j]:"";
 						if (commasReplaced) {
 							item = item.replaceAll(commaSubstitute2, ",");
 							if (item.startsWith("\"") && item.endsWith("\""))
@@ -1179,12 +1259,21 @@ public class ResultsTable implements Cloneable {
 		}
 	}
 
+	public boolean saveAndRename(String path) {
+		if (!"Results".equals(title))
+			renameWhenSaving = true;
+		boolean ok = save(path);
+		renameWhenSaving = false;
+		return ok;
+	}
+
 	public void saveAs(String path) throws IOException {
-		if (size()==0 && lastColumn<0) return;
+		boolean emptyTable = size()==0 && lastColumn<0;
 		if (path==null || path.equals("")) {
 			SaveDialog sd = new SaveDialog("Save Table", "Table", Prefs.defaultResultsExtension());
 			String file = sd.getFileName();
-			if (file==null) return;
+			if (file==null)
+				return;
 			path = sd.getDirectory() + file;
 		}
 		boolean csv = path.endsWith(".csv") || path.endsWith(".CSV");
@@ -1196,7 +1285,7 @@ public class ResultsTable implements Cloneable {
 		boolean saveShowRowNumbers = showRowNumbers;
 		if (Prefs.dontSaveRowNumbers)	
 			showRowNumbers = false;
-		if (!Prefs.dontSaveHeaders) {
+		if (saveColumnHeaders && !emptyTable) {
 			String headings = getColumnHeadings();
 			pw.println(headings);
 		}
@@ -1207,8 +1296,17 @@ public class ResultsTable implements Cloneable {
 		showRowNumbers = saveShowRowNumbers;
 		pw.close();
 		delimiter = '\t';
+		if (renameWhenSaving) {
+			File f = new File(path);
+			title =  f.getName();
+		}
 	}
 	
+	/** Returns the default headings ("Area","Mean","StdDev", etc.). */
+	public static String[] getDefaultHeadings() {
+		return defaultHeadings;
+	}
+
 	public static String getDefaultHeading(int index) {
 		if (index>=0 && index<defaultHeadings.length)
 			return defaultHeadings[index];
@@ -1420,27 +1518,76 @@ public class ResultsTable implements Cloneable {
 		((TextWindow)frame).getTextPanel().setSelection(index, index);
     	return true;	
     }
-    
-    /** Sorts this table on the specified column. TO DO: add string support.*/
+    	
+	/** Sorts this table on the specified column, with string support.
+	 * Author: 'mountain_man', 8 April 2019
+	*/
 	public void sort(String column) {
 		int col = getColumnIndex(column);
 		if (col==COLUMN_NOT_FOUND)
 			throw new IllegalArgumentException("Column not found");
-		double[] values = new double[size()];
-		for (int i=0; i<size(); i++)
-			values[i] = getValueAsDouble(col,i);
-		int[] indexes = Tools.rank(values);
+
+		// pad short string columns with "NaN" to avoid "holes" after sorting
+		if (stringColumns!=null) {
+		    for (Object c : stringColumns.values()) {
+			ArrayList sc = (ArrayList) c;
+		        for (int i = sc.size(); i < size(); i++)  sc.add ("NaN");
+		    }
+		}
+		
+		ComparableEntry[] ces = new ComparableEntry[size()];
+		ArrayList stringColumn = null;
+		if (stringColumns!=null)
+		    stringColumn = (ArrayList) stringColumns.get (new Integer (col));
+		for (int i = 0; i < size(); i++) {
+		    ComparableEntry ce = new ComparableEntry();
+		    ce.index = i;
+		    ce.dValue = columns[col][i];
+		    if (stringColumn != null)
+			ce.sValue = (String) stringColumn.get (i);
+		    ces[i] = ce;
+		}
+		Arrays.sort(ces);
+		// copy sorted values back into rt from a duplicate
 		ResultsTable rt2 = (ResultsTable)clone();
-		String[] headers = getHeadings();
-		for (int i=0; i<headers.length; i++) {
-			if ("Label".equals(headers[i])) {
-				for (int row = 0; row<size(); row++)
-					setLabel(rt2.getLabel(indexes[row]), row);
-			} else {
-				col = getColumnIndex(headers[i]);
-				for (int row = 0; row<size(); row++)
-					setValue(col, row, rt2.getValueAsDouble(col,indexes[row]));
-			}
+		for (int i = 0; i <= getLastColumn(); i++) {
+			if (columns[i]==null)
+				continue;
+		    for (int j = 0; j < size(); j++)
+				columns[i][j] = rt2.columns[i][ces[j].index];
+		    ArrayList sc = null;
+		    Map scs =  stringColumns;
+		    	if (scs != null)
+			sc = (ArrayList) scs.get (new Integer (i));
+		    if (sc != null) {
+				ArrayList sc2 = (ArrayList) rt2.stringColumns.get (new Integer (i));
+				for (int j = 0; j < size(); j++)
+			    	sc.set (j, sc2.get (ces[j].index));
+		    }
+		}
+		if (rowLabels != null) {
+			for (int i = 0; i < size(); i++)
+				rowLabels[i] =  rt2.rowLabels[ces[i].index];
+		}
+	}
+	
+	class ComparableEntry implements Comparable<ComparableEntry>  {
+		int index;
+		double dValue;
+		String sValue;
+		
+		boolean isStr() {
+			return  Double.isNaN (dValue)  &&  sValue != null  &&  !sValue.equals ("NaN");
+		}
+		
+		public int compareTo (ComparableEntry e) {
+			if (isStr() && e.isStr())
+				return sValue.compareTo (e.sValue);
+			if (isStr())
+				return -1;
+			if (e.isStr())
+				return +1;
+			return  (dValue < e.dValue) ? -1 : ( (dValue > e.dValue) ? 1 : 0 );
 		}
 	}
 		

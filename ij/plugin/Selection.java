@@ -10,6 +10,7 @@ import ij.util.Tools;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.util.Vector;
+import java.awt.geom.*;
 
 
 /** This plugin implements the commands in the Edit/Selection submenu. */
@@ -27,15 +28,24 @@ public class Selection implements PlugIn, Measurements {
 
 	public void run(String arg) {
 		imp = WindowManager.getCurrentImage();
-		if (arg.equals("add"))
-			{addToRoiManager(imp); return;}
-		if (imp==null)
-			{IJ.noImage(); return;}
-		if (arg.equals("all"))
-			imp.setRoi(0,0,imp.getWidth(),imp.getHeight());
-		else if (arg.equals("none"))
-			imp.deleteRoi();
-		else if (arg.equals("restore"))
+		if (arg.equals("add")) {
+			addToRoiManager(imp);
+			return;
+		}		
+		if (imp==null) {
+			if (!(IJ.isMacro()&&arg.equals("none")))
+				IJ.noImage();
+			return;
+		}
+		if (arg.equals("all")) {
+			if (imp.okToDeleteRoi()) {
+				imp.saveRoi();
+				imp.setRoi(0,0,imp.getWidth(),imp.getHeight());
+			}
+		} else if (arg.equals("none")) {
+			if (imp.okToDeleteRoi())
+				imp.deleteRoi();
+		} else if (arg.equals("restore"))
 			imp.restoreRoi();
 		else if (arg.equals("spline"))
 			fitSpline();
@@ -67,9 +77,12 @@ public class Selection implements PlugIn, Measurements {
 			rotate(imp); 
 		else if (arg.equals("enlarge"))
 			enlarge(imp); 
+		else if (arg.equals("rect"))
+			fitRectangle(imp); 
 	}
 	
 	private void rotate(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
 		Roi roi = imp.getRoi();
 		if (IJ.macroRunning()) {
 			String options = Macro.getOptions();
@@ -82,6 +95,7 @@ public class Selection implements PlugIn, Measurements {
 	}
 	
 	private void enlarge(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
 		Roi roi = imp.getRoi();
 		if (roi!=null) {
 			Undo.setup(Undo.ROI, imp);
@@ -101,6 +115,7 @@ public class Selection implements PlugIn, Measurements {
 	Authors: Nikolai Chernov, Michael Doube, Ved Sharma
 	*/
 	void fitCircle(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
 		Roi roi = imp.getRoi();
 		if (roi==null) {
 			noRoi("Fit Circle");
@@ -357,6 +372,7 @@ public class Selection implements PlugIn, Measurements {
 			fp.putPixelValue(i, 0, a[i]);
 		GaussianBlur gb = new GaussianBlur();
 		gb.blur1Direction(fp, 2.0, 0.01, true, 0);
+		IJ.showProgress(1.0);
 		for (int i=0; i<n; i++)
 			a[i] = (int)Math.round(fp.getPixelValue(i, 0));
 		return a;
@@ -454,6 +470,7 @@ public class Selection implements PlugIn, Measurements {
 	}
 
 	void createEllipse(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
 		IJ.showStatus("Fitting ellipse");
 		Roi roi = imp.getRoi();
 		if (roi==null)
@@ -479,28 +496,24 @@ public class Selection implements PlugIn, Measurements {
 	}
 
 	void convexHull(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
+		long startTime = System.currentTimeMillis();
 		Roi roi = imp.getRoi();
-		int type = roi!=null?roi.getType():-1;
-		if (!(type==Roi.FREEROI||type==Roi.TRACED_ROI||type==Roi.POLYGON||type==Roi.POINT))
-			{IJ.error("Convex Hull", "Polygonal or point selection required"); return;}
-		if (roi instanceof EllipseRoi)
-			return;
-		//if (roi.subPixelResolution() && roi instanceof PolygonRoi) {
-		//	FloatPolygon p = ((PolygonRoi)roi).getFloatConvexHull();
-		//	if (p!=null)
-		//		imp.setRoi(new PolygonRoi(p.xpoints, p.ypoints, p.npoints, roi.POLYGON));
-		//} else {
-		Polygon p = roi.getConvexHull();
+		if (roi == null) { IJ.error("Convex Hull", "Selection required"); return; }
+		if (roi instanceof Line) { IJ.error("Convex Hull", "Area selection, point selection, or segmented or free line required"); return; }
+		FloatPolygon p = roi.getFloatConvexHull();
 		if (p!=null) {
 			Undo.setup(Undo.ROI, imp);
-			Roi roi2 = new PolygonRoi(p.xpoints, p.ypoints, p.npoints, roi.POLYGON);
+			imp.deleteRoi();
+			Roi roi2 = new PolygonRoi(p, roi.POLYGON);
 			transferProperties(roi, roi2);
 			imp.setRoi(roi2);
+			IJ.showTime(imp, startTime, "Convex Hull ", 1);
 		}
 	}
 	
 	// Finds the index of the upper right point that is guaranteed to be on convex hull
-	int findFirstPoint(int[] xCoordinates, int[] yCoordinates, int n, ImagePlus imp) {
+	/*int findFirstPoint(int[] xCoordinates, int[] yCoordinates, int n, ImagePlus imp) {
 		int smallestY = imp.getHeight();
 		int x, y;
 		for (int i=0; i<n; i++) {
@@ -519,7 +532,7 @@ public class Selection implements PlugIn, Measurements {
 			}
 		}
 		return p1;
-	}
+	}*/
 	
 	void createMask(ImagePlus imp) {
 		Roi roi = imp.getRoi();
@@ -540,6 +553,7 @@ public class Selection implements PlugIn, Measurements {
 		ByteProcessor mask = imp.createRoiMask();
 		if (!Prefs.blackBackground)
 			mask.invertLut();
+		mask.setThreshold(255, 255, ImageProcessor.NO_LUT_UPDATE);
 		ImagePlus maskImp = null;
 		Frame frame = WindowManager.getFrame("Mask");
 		if (frame!=null && (frame instanceof ImageWindow))
@@ -573,7 +587,16 @@ public class Selection implements PlugIn, Measurements {
 		ByteProcessor mask = imp.createThresholdMask();
 		if (!Prefs.blackBackground)
 			mask.invertLut();
-		new ImagePlus("mask",mask).show();
+		mask.setThreshold(255, 255, ImageProcessor.NO_LUT_UPDATE);
+		ImagePlus maskImp = new ImagePlus("mask",mask);
+		Calibration cal = imp.getCalibration();
+		if (cal.scaled()) {
+			Calibration cal2 = maskImp.getCalibration();
+			cal2.pixelWidth = cal.pixelWidth;
+			cal2.pixelHeight = cal.pixelHeight;
+			cal2.setUnit(cal.getUnit());
+		}
+		maskImp.show();
 		Recorder.recordCall("mask = imp.createThresholdMask();");
 	}
 
@@ -586,29 +609,28 @@ public class Selection implements PlugIn, Measurements {
 		if (!ip.isBinary()) {
 			IJ.error("Create Selection",
 				"This command creates a composite selection from\n"+
-				"a mask (8-bit binary image with white background)\n"+
-				"or from an image that has been thresholded using\n"+
-				"the Image>Adjust>Threshold tool. The current\n"+
-				"image is not a mask and has not been thresholded.");
+				"a mask (8-bit binary image) or from an image\n"+
+				"thresholded using Image>Adjust>Threshold\n"+
+				"The current image is not a mask and has not\n"+
+				"been thresholded.");
 			return;
 		}
 		int threshold = ip.isInvertedLut()?255:0;
+		if (Prefs.blackBackground)
+			threshold = (threshold==255)?0:255;
 		ip.setThreshold(threshold, threshold, ImageProcessor.NO_LUT_UPDATE);
 		IJ.runPlugIn("ij.plugin.filter.ThresholdToSelection", "");
 	}
-
+	
 	void invert(ImagePlus imp) {
 		Roi roi = imp.getRoi();
-		if (roi==null || !roi.isArea())
+		if (roi == null)
+			{run("all"); return;}
+		if (!roi.isArea())
 			{IJ.error("Inverse", "Area selection required"); return;}
-		ShapeRoi s1, s2;
-		if (roi instanceof ShapeRoi)
-			s1 = (ShapeRoi)roi;
-		else
-			s1 = new ShapeRoi(roi);
-		s2 = new ShapeRoi(new Roi(0,0, imp.getWidth(), imp.getHeight()));
+		Roi inverse = roi.getInverse(imp);
 		Undo.setup(Undo.ROI, imp);
-		imp.setRoi(s1.xor(s2));
+		imp.setRoi(inverse);
 	}
 	
 	private void lineToArea(ImagePlus imp) {
@@ -618,48 +640,12 @@ public class Selection implements PlugIn, Measurements {
 		Undo.setup(Undo.ROI, imp);
 		Roi roi2 = lineToArea(roi);
 		imp.setRoi(roi2);
-		Roi.previousRoi = (Roi)roi.clone();
+		Roi.setPreviousRoi(roi);
 	}
 	
 	/** Converts a line selection into an area selection. */
 	public static Roi lineToArea(Roi roi) {
-		Roi roi2 = null;
-		if (roi.getType()==Roi.LINE) {
-			double width = roi.getStrokeWidth();
-			if (width<=1.0)
-				roi.setStrokeWidth(1.0000001);
-			FloatPolygon p = roi.getFloatPolygon();
-			roi.setStrokeWidth(width);
-			roi2 = new PolygonRoi(p, Roi.POLYGON);
-			roi2.setDrawOffset(roi.getDrawOffset());
-		} else {
-			roi = (Roi)roi.clone();
-			int lwidth = (int)roi.getStrokeWidth();
-			if (lwidth<1)
-				lwidth = 1;
-			Rectangle bounds = roi.getBounds();
-			int width = bounds.width + lwidth*2;
-			int height = bounds.height + lwidth*2;
-			ImageProcessor ip2 = new ByteProcessor(width, height);
-			roi.setLocation(lwidth, lwidth);
-			ip2.setColor(255);
-			roi.drawPixels(ip2);
-			ip2.setThreshold(255, 255, ImageProcessor.NO_LUT_UPDATE);
-			ThresholdToSelection tts = new ThresholdToSelection();
-			roi2 = tts.convert(ip2);
-			if (roi2==null)
-				return roi;
-			if (bounds.x==0&&bounds.y==0)
-				roi2.setLocation(0, 0);
-			else
-				roi2.setLocation(bounds.x-lwidth/2, bounds.y-lwidth/2);
-		}
-		transferProperties(roi, roi2);
-		roi2.setStrokeWidth(0);
-		Color c = roi2.getStrokeColor();
-		if (c!=null)  // remove any transparency
-			roi2.setStrokeColor(new Color(c.getRed(),c.getGreen(),c.getBlue()));
-		return roi2;
+		return Roi.convertLineToArea(roi);
 	}
 	
 	void areaToLine(ImagePlus imp) {
@@ -670,18 +656,28 @@ public class Selection implements PlugIn, Measurements {
 		}
 		Undo.setup(Undo.ROI, imp);
 		Polygon p = roi.getPolygon();
-		if (p==null) return;
+		FloatPolygon fp = (roi.subPixelResolution()) ? roi.getFloatPolygon() : null;
+		if (p==null && fp==null)
+			return;
 		int type1 = roi.getType();
 		if (type1==Roi.COMPOSITE) {
 			IJ.error("Area to Line", "Composite selections cannot be converted to lines.");
 			return;
 		}
+		if (fp==null && type1==Roi.TRACED_ROI) {
+			for (int i=0; i<p.npoints; i++) {
+				if (p.xpoints[i]>=imp.getWidth()) p.xpoints[i]=imp.getWidth()-1;
+				if (p.ypoints[i]>=imp.getHeight()) p.ypoints[i]=imp.getHeight()-1;
+			}
+		}
 		int type2 = Roi.POLYLINE;
 		if (type1==Roi.OVAL||type1==Roi.FREEROI||type1==Roi.TRACED_ROI
 		||((roi instanceof PolygonRoi)&&((PolygonRoi)roi).isSplineFit()))
 			type2 = Roi.FREELINE;
-		Roi roi2 = new PolygonRoi(p.xpoints, p.ypoints, p.npoints, type2);
+		Roi roi2 = fp==null ? new PolygonRoi(p, type2) : new PolygonRoi(fp, type2);
 		transferProperties(roi, roi2);
+		Rectangle2D.Double bounds = roi.getFloatBounds();
+		roi2.setLocation(bounds.x - 0.5, bounds.y -0.5);	//area and line roi coordinates are 0.5 pxl different
 		imp.setRoi(roi2);
 	}
 
@@ -691,6 +687,8 @@ public class Selection implements PlugIn, Measurements {
 			noRoi("To Bounding Box");
 			return;
 		}
+		if (!imp.okToDeleteRoi())
+			return;
 		Undo.setup(Undo.ROI, imp);
 		Rectangle r = roi.getBounds();
 		imp.deleteRoi();
@@ -727,6 +725,25 @@ public class Selection implements PlugIn, Measurements {
 					IJ.error("Add to Manager", "Selection is not complete");
 					return;
 				}
+			}
+		}
+		if (Recorder.record && imp.getStackSize()>1) {
+			if (imp.isHyperStack()) {
+				int C = imp.getChannel();
+				int Z = imp.getSlice();
+				int T = imp.getFrame();
+				if (Recorder.scriptMode()) {
+					Recorder.recordCall("roi = imp.getRoi();");
+					Recorder.recordCall("roi.setPosition("+C+", "+Z+", "+T+");");
+				} else
+					Recorder.record("Roi.setPosition", C, Z, T);				
+			} else {
+				int position = imp.getCurrentSlice();
+				if (Recorder.scriptMode()) {
+					Recorder.recordCall("roi = imp.getRoi();");
+					Recorder.recordCall("roi.setPosition("+position+");");
+				} else
+					Recorder.record("Roi.setPosition", position);
 			}
 		}
 		rm.allowRecording(true);
@@ -833,9 +850,105 @@ public class Selection implements PlugIn, Measurements {
 		bandSize = n;
 	}
 	
+	/*  Fits a minimum area rectangle into a ROI, by searching for the minimum area bounding rectangles
+	 *  among the ones having a side that is colinear with an edge of the convex hull.
+	 *	
+	 * 	Loosely based on:
+	 * 	H. Freeman and R. Shapira. 1975. Determining the minimum-area encasing rectangle for an arbitrary 
+	 * 	closed curve. Commun. ACM 18, 7 (July 1975), 409–413. DOI:https://doi.org/10.1145/360881.360919	
+	*/
+	private void fitRectangle(ImagePlus imp) {
+		if (!imp.okToDeleteRoi()) return;
+		long startTime = System.currentTimeMillis();
+		Roi roi = imp.getRoi();
+		if (roi == null)
+			{noRoi("Fit Rectangle"); return;}
+		if (roi instanceof Line || roi.isDrawingTool()) 
+			{IJ.error("Fit Rectangle", "Area selection, point selection, or segmented or free line required"); return;}
+		if (!roi.isArea()) {
+			// check number of points and colinearity before proceeding
+			FloatPolygon poly = roi.getFloatPolygon();
+			int n = poly.npoints;
+			if (n < 3)
+				{IJ.error("Fit Rectangle", "At least three points are required"); return;}
+			float[] x = poly.xpoints;
+			float[] y = poly.ypoints;
+			boolean colinear = true;
+			for(int i=2; i<n; i++) {
+				float prod = (x[i] - x[0]) * (y[i] - y[0]) - (x[i] - x[1]) * (y[i] - y[1]);
+				if (prod != 0)	colinear = false;	
+			}
+			if (colinear)
+				{IJ.error("Fit Rectangle", "Points are colinear"); return;}
+		}
+		FloatPolygon p = roi.getFloatConvexHull();
+		if (p!=null) {		
+			int np = p.npoints;
+			float[] xp = p.xpoints;
+			float[] yp = p.ypoints;
+			Rectangle r = roi.getBounds();
+			double minArea = 2 * r.width * r.height; // generous overestimation
+			double minFD = 0;
+			int imin = -1;
+			int i2min = -1;
+			int jmin = -1;
+			double min_hmin = 0;
+			double min_hmax = 0;
+			for (int i = 0; i < np; i++) {
+				double maxLD = 0;
+				int imax = -1;
+				int i2max = -1;
+				int jmax = -1;
+				int i2 = i + 1;
+				if(i == np-1) i2 = 0;
+				for (int j = 0; j < np; j++) {
+					// distance based on vector cross product
+					double d = Math.abs( ((xp[i2] - xp[i]) * (yp[j] - yp[i]) - (xp[j] - xp[i]) * (yp[i2] - yp[i])) / Math.sqrt(Math.pow(xp[i2] - xp[i], 2) + Math.pow(yp[i2] - yp [i], 2)) );
+					if (maxLD < d) {
+						maxLD = d;
+						imax = i;
+						jmax = j;
+						i2max = i2;
+					}
+				}
+				double hmin = 0;
+				double hmax = 0;
+				for (int k = 0; k < np; k++) { // rotating calipers
+					// projected distance based on vector dot product, includes sign
+					double hd = ((xp[i2max] - xp[imax]) * (xp[k] -  xp[imax]) + (yp[k] - yp[imax]) * (yp[i2max] - yp[imax])) / Math.sqrt(Math.pow(xp[i2max] - xp[imax], 2) + Math.pow(yp[i2max] - yp [imax], 2));
+					hmin = Math.min(hmin, hd);
+					hmax = Math.max(hmax, hd);
+				}
+				double area = maxLD * (hmax - hmin);
+				if (minArea > area) {
+					minArea = area;
+					minFD = maxLD;
+					min_hmin = hmin;
+					min_hmax = hmax;
+
+					imin = imax;
+					i2min = i2max;
+					jmin = jmax;
+				}
+			}
+			double pd = ((xp[i2min] - xp[imin]) * (yp[jmin] - yp[imin]) - (xp[jmin] - xp[imin]) * (yp[i2min] - yp[imin])) / Math.sqrt(Math.pow(xp[i2min] - xp[imin], 2) + Math.pow(yp[i2min] - yp [imin], 2)); // signed feret diameter
+			double pairAngle = Math.atan2( yp[i2min]- yp[imin], xp[i2min]- xp[imin]);
+			double minAngle = pairAngle + Math.PI/2;
+			double x1 = xp[imin] + Math.cos(pairAngle) * min_hmax + Math.cos(minAngle) * pd/2;
+			double y1 = yp[imin] + Math.sin(pairAngle) * min_hmax + Math.sin(minAngle) * pd/2;
+			double x2 = xp[imin] + Math.cos(pairAngle) * min_hmin + Math.cos(minAngle) * pd/2;
+			double y2 = yp[imin] + Math.sin(pairAngle) * min_hmin + Math.sin(minAngle) * pd/2;
+			Undo.setup(Undo.ROI, imp);
+			imp.deleteRoi();
+			Roi roi2 = new RotatedRectRoi(x1,  y1,  x2,  y2,  minFD);
+			transferProperties(roi, roi2);
+			imp.setRoi(roi2);
+			IJ.showTime(imp, startTime, "Fit Rectangle ", 1);
+		}
+	}
+	
 	void noRoi(String command) {
 		IJ.error(command, "This command requires a selection");
 	}
 
 }
-

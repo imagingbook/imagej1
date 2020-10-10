@@ -27,6 +27,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 		"importPackage(Packages.ij.process);"+
 		"importPackage(Packages.ij.measure);"+
 		"importPackage(Packages.ij.util);"+
+		"importPackage(Packages.ij.macro);"+
 		"importPackage(Packages.ij.plugin);"+
 		"importPackage(Packages.ij.io);"+
 		"importPackage(Packages.ij.plugin.filter);"+
@@ -40,7 +41,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 		"function print(s) {IJ.log(s);};";
 		
 	private static String JS_EXAMPLES =
-		"img = IJ.openImage(\"http://wsr.imagej.net/images/blobs.gif\")\n"
+		"img = IJ.openImage(\"http://imagej.net/images/blobs.gif\")\n"
  		+"img = IJ.createImage(\"Untitled\", \"16-bit ramp\", 500, 500, 1)\n" 		
  		+"img.show()\n"
  		+"ip = img.getProcessor()\n"
@@ -56,7 +57,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 
 	public static final int MAX_SIZE=28000, XINC=10, YINC=18;
 	public static final int MONOSPACED=1, MENU_BAR=2;
-	public static final int MACROS_MENU_ITEMS = 14;
+	public static final int MACROS_MENU_ITEMS = 15;
 	public static final String INTERACTIVE_NAME = "Interactive Interpreter";
 	static final String FONT_SIZE = "editor.font.size";
 	static final String FONT_MONO= "editor.font.mono";
@@ -88,7 +89,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	private static String defaultDir = Prefs.get(DEFAULT_DIR, null);;
 	private boolean dontShowWindow;
 	private int[] sizes = {9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 36, 48, 60, 72};
-	private int fontSize = (int)Prefs.get(FONT_SIZE, 6); // defaults to 16-point
+	private int fontSizeIndex = (int)Prefs.get(FONT_SIZE, 6); // defaults to 16-point
 	private CheckboxMenuItem monospaced;
 	private static boolean wholeWords;
 	private boolean isMacroWindow;
@@ -111,6 +112,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	private Interpreter interpreter;
 	private JavaScriptEvaluator evaluator;
 	private int messageCount;
+	private String rejectMacrosMsg;
 	
 	public Editor() {
 		this(24, 80, 0, MENU_BAR);
@@ -196,8 +198,8 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 			setMenuBar(mb);
 		
 		m = new Menu("Font");
-		m.add(new MenuItem("Make Text Smaller", new MenuShortcut(KeyEvent.VK_MINUS)));
-		m.add(new MenuItem("Make Text Larger", new MenuShortcut(KeyEvent.VK_EQUALS)));
+		m.add(new MenuItem("Make Text Smaller"));
+		m.add(new MenuItem("Make Text Larger"));
 		m.addSeparator();
 		monospaced = new CheckboxMenuItem("Monospaced Font", Prefs.get(FONT_MONO, false));
 		if ((options&MONOSPACED)!=0) monospaced.setState(true);
@@ -247,7 +249,8 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 			macrosMenu.add(new MenuItem("Install Macros", new MenuShortcut(KeyEvent.VK_I)));
 			macrosMenu.add(new MenuItem("Macro Functions...", new MenuShortcut(KeyEvent.VK_M, true)));
 			macrosMenu.add(new MenuItem("Function Finder...", new MenuShortcut(KeyEvent.VK_F, true)));
-			macrosMenu.add(new MenuItem("Enter Interactive Mode", new MenuShortcut(KeyEvent.VK_M)));
+			macrosMenu.add(new MenuItem("Enter Interactive Mode"));
+			macrosMenu.add(new MenuItem("Assign to Repeat Cmd",new MenuShortcut(KeyEvent.VK_A, true)));
 			macrosMenu.addSeparator();
 			macrosMenu.add(new MenuItem("Evaluate Macro"));
 			macrosMenu.add(new MenuItem("Evaluate JavaScript", new MenuShortcut(KeyEvent.VK_J, false)));
@@ -274,6 +277,12 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 			fileMenu.addSeparator();
 			fileMenu.add(new MenuItem("Compile and Run", new MenuShortcut(KeyEvent.VK_R)));
 		}
+		if (text.startsWith("//@AutoInstall") && (name.endsWith(".ijm")||name.endsWith(".txt"))) {
+			boolean installInPluginsMenu = !name.contains("Tool.");
+			installMacros(text, installInPluginsMenu);
+			if ( text.startsWith("//@AutoInstallAndHide"))
+				dontShowWindow = true;		
+		}
 		if (IJ.getInstance()!=null && !dontShowWindow)
 			show();
 		if (dontShowWindow) {
@@ -293,8 +302,19 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	public void createMacro(String name, String text) {
 		create(name, text);
 	}
+	public void setRejectMacrosMsg(String msg ) {
+		rejectMacrosMsg = msg;
+	}
+	public String getRejectMacrosMsg() {
+		return rejectMacrosMsg;
+	}
 	
 	void installMacros(String text, boolean installInPluginsMenu) {
+		if (rejectMacrosMsg != null){
+			if (rejectMacrosMsg.length()> 0)
+					IJ.showMessage("", rejectMacrosMsg);
+			return;
+		}
 		String functions = Interpreter.getAdditionalFunctions();
 		if (functions!=null && text!=null) {
 			if (!(text.endsWith("\n") || functions.startsWith("\n")))
@@ -304,8 +324,8 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 		}
 		installer = new MacroInstaller();
 		installer.setFileName(getTitle());
-		int nShortcutsOrTools = installer.install(text, macrosMenu);
-		if (installInPluginsMenu || nShortcutsOrTools>0)
+		int nShortcuts = installer.install(text, macrosMenu);
+		if (installInPluginsMenu || nShortcuts>0)
 			installer.install(null);
 		dontShowWindow = installer.isAutoRunAndHide();
 		currentMacroEditor = this;
@@ -669,6 +689,22 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 				ta.setCaretPosition(start);
 		}	
 	}
+	
+	private void assignToRepeatCommand() {
+		String title = getTitle();
+		if (!(title.endsWith(".ijm")||title.endsWith(".txt")||!title.contains("."))) {
+			IJ.error("Assign to Repeat Command", "One or more lines of macro code required.");
+			return;
+		}
+		int start = ta.getSelectionStart();
+		int end = ta.getSelectionEnd();
+		String text;
+		if (start==end)
+			text = ta.getText();
+		else
+			text = ta.getSelectedText();
+		Executer.setAsRepeatCommand(text);
+	}
 
 	void paste() {
 		String s;
@@ -774,6 +810,8 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 		   undo();
 		else if (what.startsWith("Paste"))
 			paste();
+		else if (what.equals("Copy to Image Info"))
+			copyToInfo();
 		else if (what.startsWith("Copy"))
 			copy();
 		else if (what.startsWith("Cut"))
@@ -804,10 +842,10 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 			IJ.run("Text Window");
 		else if ("Open...".equals(what))
 			IJ.open();
-		else if (what.equals("Copy to Image Info"))
-			copyToInfo();
 		else if (what.equals("Enter Interactive Mode"))
 			enterInteractiveMode();
+		else if (what.equals("Assign to Repeat Cmd"))
+			assignToRepeatCommand();
 		else if (what.endsWith(".ijm") || what.endsWith(".java") || what.endsWith(".js") || what.endsWith(".bsh") || what.endsWith(".py"))
 			openExample(what);
 		else {
@@ -1034,7 +1072,7 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 				if (imp!=null)
 					imp.updateAndDraw();
 			}
-		} else {
+		} else if (!code.startsWith("[Macro ")) {
 			String rtn = interpreter.eval(code);
 			if (rtn!=null)
 				insertText(rtn);
@@ -1122,6 +1160,9 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	public void saveAs() {
 		String name1 = getTitle();
 		if (name1.indexOf(".")==-1) name1 += ".txt";
+		if (defaultDir!=null && name1.endsWith(".java") && !defaultDir.startsWith(Menus.getPlugInsPath())) {
+			defaultDir = null;
+		}
 		if (defaultDir==null) {
 			if (name1.endsWith(".txt")||name1.endsWith(".ijm"))
 				defaultDir = Menus.getMacrosPath();
@@ -1456,28 +1497,28 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	}
     
     void changeFontSize(boolean larger) {
-        int in = fontSize;
+        int in = fontSizeIndex;
         if (larger) {
-            fontSize++;
-            if (fontSize==sizes.length)
-                fontSize = sizes.length-1;
+            fontSizeIndex++;
+            if (fontSizeIndex==sizes.length)
+                fontSizeIndex = sizes.length-1;
         } else {
-            fontSize--;
-            if (fontSize<0)
-                fontSize = 0;
+            fontSizeIndex--;
+            if (fontSizeIndex<0)
+                fontSizeIndex = 0;
         }
-        IJ.showStatus(sizes[fontSize]+" point");
+        IJ.showStatus(sizes[fontSizeIndex]+" point");
         setFont();
     }
     
     void saveSettings() {
-		Prefs.set(FONT_SIZE, fontSize);
+		Prefs.set(FONT_SIZE, fontSizeIndex);
 		Prefs.set(FONT_MONO, monospaced.getState());
-		IJ.showStatus("Font settings saved (size="+sizes[fontSize]+", monospaced="+monospaced.getState()+")");
+		IJ.showStatus("Font settings saved (size="+sizes[fontSizeIndex]+", monospaced="+monospaced.getState()+")");
     }
     
     void setFont() {
-        ta.setFont(new Font(getFontName(), Font.PLAIN, sizes[fontSize]));
+        ta.setFont(new Font(getFontName(), Font.PLAIN, sizes[fontSizeIndex]));
     }
     
     String getFontName() {
@@ -1486,6 +1527,10 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 	
 	public void setFont(Font font) {
 		ta.setFont(font);
+	}
+	
+	public int getFontSize() {
+		return sizes[fontSizeIndex];
 	}
 
 	public void append(String s) {
@@ -1496,10 +1541,9 @@ public class Editor extends PlugInFrame implements ActionListener, ItemListener,
 		isMacroWindow = mw;
 	}
 
-	public static void setDefaultDirectory(String defaultDirectory) {
-		defaultDir = defaultDirectory;
-		if (defaultDir!=null && !(defaultDir.endsWith(File.separator)||defaultDir.endsWith("/")))
-			defaultDir += File.separator;
+	public static void setDefaultDirectory(String dir) {
+		dir = IJ.addSeparator(dir);
+		defaultDir = dir;
 	}
 	
 	public void lostOwnership (Clipboard clip, Transferable cont) {}

@@ -317,13 +317,14 @@ public class ByteProcessor extends ImageProcessor {
 			else
 				return cTable[pixels[y*width + x]&0xff];
 		} else
-			return 0f;
+			return Float.NaN;
 	}
 
 	/** Sets the foreground drawing color. */
 	public void setColor(Color color) {
 		drawingColor = color;
 		fgColor = getBestIndex(color);
+		fillValueSet = true;
 	}
 
 	/** Sets the default fill/draw value, where 0<=value<=255. */
@@ -331,6 +332,12 @@ public class ByteProcessor extends ImageProcessor {
 		fgColor = (int)value;
 		if (fgColor<0) fgColor = 0;
 		if (fgColor>255) fgColor = 255;
+		fillValueSet = true;
+	}
+
+	/** Returns the foreground fill/draw value. */
+	public double getForegroundValue() {
+		return fgColor;
 	}
 
 	/** Sets the background fill value, where 0<=value<=255. */
@@ -423,8 +430,8 @@ public class ByteProcessor extends ImageProcessor {
 	public void setMinAndMax(double min, double max) {
 		if (max<min)
 			return;
-		this.min = (int)min;
-		this.max = (int)max;
+		this.min = (int)Math.round(min);
+		this.max = (int)Math.round(max);
 		if (rLUT1==null) {
 			if (cm==null)
 				makeDefaultColorModel();
@@ -821,10 +828,18 @@ public class ByteProcessor extends ImageProcessor {
 		new BinaryProcessor(this).outline();
 	}
 	
+	/** Converts black objects in a binary image to single pixel skeletons. */
 	public void skeletonize() {
 		new BinaryProcessor(this).skeletonize();
 	}
 	
+	/** Converts objects with pixel values of 'forground' (255 or 0) 
+		in a binary imager to single pixel skeletons.
+	*/
+	public void skeletonize(int foreground) {
+		new BinaryProcessor(this).skeletonize(foreground);
+	}
+
 	private final int findMedian (int[] values) {
 	//Finds the 5th largest of 9 values
 		for (int i = 1; i <= 4; i++) {

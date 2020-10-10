@@ -33,6 +33,7 @@ public class Undo {
 	private static Roi roiCopy;
 	private static double displayRangeMin, displayRangeMax;
 	private static LUT lutCopy;
+	private static Overlay overlayCopy;
 	
 	public static void setup(int what, ImagePlus imp) {
 		if (imp==null) {
@@ -59,8 +60,9 @@ public class Undo {
 			else
 				reset();
 		} else if (what==MACRO) {	
-			impCopy = new ImagePlus(imp.getTitle(), imp.getProcessor().duplicate());
-			whatToUndo = TRANSFORM;
+			ipCopy = imp.getProcessor().duplicate();
+			calCopy = (Calibration)imp.getCalibration().clone();
+			impCopy = null;
 		} else if (what==COMPOUND_FILTER) {
 			ImageProcessor ip = imp.getProcessor();
 			if (ip!=null)
@@ -85,6 +87,14 @@ public class Undo {
 			//lutCopy = (LUT)ip.getLut().clone();
 		}
 	}
+	
+	public static void saveOverlay(ImagePlus imp) {
+		Overlay overlay = imp!=null?imp.getOverlay():null;
+		if (overlay!=null)
+			overlayCopy = overlay.duplicate();
+		else
+			overlayCopy = null;
+	}
 		
 	public static void reset() {
 		if (IJ.debugMode) IJ.log("Undo.reset: "+ whatToUndo+" "+impCopy);
@@ -97,8 +107,8 @@ public class Undo {
 		calCopy = null;
 		roiCopy = null;
 		lutCopy = null;
-	}
-	
+		overlayCopy = null;
+	}	
 
 	public static void undo() {
 		ImagePlus imp = WindowManager.getCurrentImage();
@@ -114,6 +124,13 @@ public class Undo {
 		}
 		switch (whatToUndo) {
 			case FILTER:
+				if (overlayCopy!=null) {
+					Overlay overlay = imp.getOverlay();
+					if (overlay!=null) {
+						imp.setOverlay(overlayCopy);
+						overlayCopy = overlay.duplicate();
+					}
+				}
 				ImageProcessor ip = imp.getProcessor();
 				if (ip!=null) {
 					if (!IJ.macroRunning()) {
@@ -153,6 +170,12 @@ public class Undo {
 				setup(ROI, imp); // setup redo
 				imp.setRoi(roiCopy2);
 				return; //don't reset
+			case MACRO:
+				if (ipCopy!=null) {
+					imp.setProcessor(ipCopy);
+					if (calCopy!=null) imp.setCalibration(calCopy);
+				}
+				break;
 			case OVERLAY_ADDITION:
 				Overlay overlay = imp.getOverlay();
 				if (overlay==null) 

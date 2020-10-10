@@ -228,10 +228,11 @@ public class BrushTool extends PlugInTool implements Runnable {
 	}
 
 	public String getToolIcon() {
+		// C123 is the foreground color
 		if (isPencil)
 			return "C037L4990L90b0Lc1c3L82a4Lb58bL7c4fDb4L494fC123L5a5dL6b6cD7b";
 		else
-			return "C037La077Ld098L6859L4a2fL2f4fL5e9bL9b98L6888L5e8dL888cC123L8a3fL8b6d";
+			return "N02 C123H2i2g3e5c6b9b9e8g6h4i2i0 C037Lc07aLf09b P2i3e5c6b9b9e8g6h4i2i0";
 	}
 
 	public void run() {
@@ -253,7 +254,7 @@ public class BrushTool extends PlugInTool implements Runnable {
 			Color color = Toolbar.getForegroundColor();
 			String colorName = Colors.colorToString2(color);
 			String name = isPencil?"Pencil":"Brush";
-			gd = new NonBlockingGenericDialog(name+" Options");
+			gd = NonBlockingGenericDialog.newDialog(name+" Options");
 			gd.addSlider(name+" width:", 1, 50, width);
 			//gd.addSlider("Transparency (%):", 0, 100, transparency);
 			gd.addChoice("Color:", Colors.getColors(colorName), colorName);

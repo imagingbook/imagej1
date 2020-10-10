@@ -8,8 +8,7 @@ import ij.process.*;
 import ij.measure.*;
 import ij.text.*;
 import ij.plugin.filter.Analyzer;
-import ij.plugin.frame.Recorder;
-import ij.plugin.frame.RoiManager;
+import ij.plugin.frame.*;
 import ij.plugin.Colors;
 import ij.macro.Interpreter;
 import ij.util.Tools;
@@ -105,7 +104,8 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		resetCounter,showProgress, recordStarts, displaySummary, floodFill,
 		addToManager, inSituShow;
 		
-	private boolean showResultsWindow = true;
+	private boolean showResultsTable = true;
+	private boolean showSummaryTable = true;
 	private double level1, level2;
 	private double minSize, maxSize;
 	private double minCircularity, maxCircularity;
@@ -142,7 +142,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 	private Polygon polygon;
 	private RoiManager roiManager;
 	private static RoiManager staticRoiManager;
-	private static ResultsTable staticResultsTable;
+	private static ResultsTable staticResultsTable, staticSummaryTable;
 	private ImagePlus outputImage;
 	private boolean hideOutputImage;
 	private int roiType;
@@ -452,7 +452,12 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		if (staticResultsTable!=null) {
 			rt = staticResultsTable;
 			staticResultsTable = null;
-			showResultsWindow = false;
+			showResultsTable = false;
+		}
+		if (staticSummaryTable!=null) {
+			summaryTable = staticSummaryTable;
+			staticSummaryTable = null;
+			showSummaryTable = false;
 		}
 		displaySummary = (options&DISPLAY_SUMMARY)!=0 ||  (options&SHOW_SUMMARY)!=0;
 		inSituShow = (options&IN_SITU_SHOW)!=0;
@@ -601,12 +606,12 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		}
 		if (showProgress)
 			IJ.showProgress(1.0);
-		if (showResults && showResultsWindow && rt.size()>0)
+		if (showResults && showResultsTable && rt.size()>0)
 			rt.updateResults();
 		imp.deleteRoi();
 		ip.resetRoi();
 		ip.reset();
-		if (displaySummary && IJ.getInstance()!=null)
+		if (displaySummary)
 			updateSliceSummary();
 		if (addToManager && roiManager!=null)
 			roiManager.setEditMode(imp, true);
@@ -666,7 +671,8 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		summaryTable.addValue("%Area", sum*100.0/totalArea);
 		addMeans(areas.length>0?start:-1);
 		String title = slices==1?"Summary":"Summary of "+imp.getTitle();
-		summaryTable.show(title);
+		if (showSummaryTable)
+			summaryTable.show(title);
 	}
 
  	void addMeans(int start) {
@@ -877,6 +883,8 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 				roi.setImage(imp);
 			stats.xstart=x; stats.ystart=y;
 			saveResults(stats, roi);
+			if (addToManager)
+				addToRoiManager(roi, mask, particleCount);				
 			if (showChoice!=NOTHING)
 				drawParticle(drawIP, roi, stats, mask);
 		}
@@ -913,46 +921,47 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 			rt.addValue("XStart", stats.xstart);
 			rt.addValue("YStart", stats.ystart);
 		}
-		if (addToManager) {
-			if (roiManager==null) {
-				if (Macro.getOptions()!=null && Interpreter.isBatchMode())
-					roiManager = Interpreter.getBatchModeRoiManager();
-				if (roiManager==null) {
-					Frame frame = WindowManager.getFrame("ROI Manager");
-					if (frame==null)
-						IJ.run("ROI Manager...");
-					frame = WindowManager.getFrame("ROI Manager");
-					if (frame==null || !(frame instanceof RoiManager))
-						{addToManager=false; return;}
-					roiManager = (RoiManager)frame;
-				}
-				if (resetCounter)
-					roiManager.runCommand("reset");
-			}
-			if (imp.getStackSize()>1) {
-				int n = imp.getCurrentSlice();
-				if (hyperstack) {
-					int[] pos = imp.convertIndexToPosition(n);
-					roi.setPosition(pos[0],pos[1],pos[2]);
-				} else
-					roi.setPosition(n);
-			}
-			if (lineWidth!=1)
-				roi.setStrokeWidth(lineWidth);
-			roiManager.add(imp, roi, rt.size());
-		}
-		if (showResultsWindow && showResults)
+		if (showResultsTable && showResults)
 			rt.addResults();
+	}
+	
+	/** Adds the ROI to the ROI Manager. */
+	private void addToRoiManager(Roi roi, ImageProcessor mask, int particleNumber) {
+		if (roiManager==null) {
+			if (Macro.getOptions()!=null && Interpreter.isBatchMode())
+				roiManager = Interpreter.getBatchModeRoiManager();
+			if (roiManager==null) {
+				Frame frame = WindowManager.getFrame("ROI Manager");
+				if (frame==null)
+					IJ.run("ROI Manager...");
+				frame = WindowManager.getFrame("ROI Manager");
+				if (frame==null || !(frame instanceof RoiManager))
+					{addToManager=false; return;}
+				roiManager = (RoiManager)frame;
+			}
+			if (resetCounter)
+				roiManager.runCommand("reset");
+		}
+		if (imp.getStackSize()>1) {
+			int n = imp.getCurrentSlice();
+			if (hyperstack) {
+				int[] pos = imp.convertIndexToPosition(n);
+				roi.setPosition(pos[0],pos[1],pos[2]);
+			} else
+				roi.setPosition(n);
+		}
+		if (lineWidth!=1)
+			roi.setStrokeWidth(lineWidth);
+		roiManager.add(imp, roi, particleNumber);
 	}
 	
 	/** Draws a selected particle in a separate image.	This is
 		another method subclasses may want to override. */
-	protected void drawParticle(ImageProcessor drawIP, Roi roi,
-	ImageStatistics stats, ImageProcessor mask) {
+	protected void drawParticle(ImageProcessor drawIP, Roi roi, ImageStatistics stats, ImageProcessor mask) {
 		switch (showChoice) {
 			case MASKS: drawFilledParticle(drawIP, roi, mask); break;
 			case OUTLINES: case BARE_OUTLINES: case OVERLAY_OUTLINES: case OVERLAY_MASKS:
-				drawOutline(drawIP, roi, rt.size()); break;
+				drawOutline(drawIP, roi, mask, rt.size()); break;
 			case ELLIPSES: drawEllipse(drawIP, stats, rt.size()); break;
 			case ROI_MASKS: drawRoiFilledParticle(drawIP, roi, mask, rt.size()); break;
 			default:
@@ -964,7 +973,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		ip.fill(mask);
 	}
 
-	void drawOutline(ImageProcessor ip, Roi roi, int count) {
+	void drawOutline(ImageProcessor ip, Roi roi, ImageProcessor mask, int count) {
 		if (showChoice==OVERLAY_OUTLINES || showChoice==OVERLAY_MASKS) {
 			if (overlay==null) {
 				overlay = new Overlay();
@@ -1027,7 +1036,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		int count = rt.size();
 		// if (count==0) return;
 		boolean lastSlice = !processStack||slice==imp.getStackSize();
-		if ((showChoice==OVERLAY_OUTLINES||showChoice==OVERLAY_MASKS) && count>0 && (!processStack||slice==imp.getStackSize())) {
+		if ((showChoice==OVERLAY_OUTLINES||showChoice==OVERLAY_MASKS) && overlay!=null && count>0 && (!processStack||slice==imp.getStackSize())) {
 			if (processStack)
 				imp.setOverlay(overlay);
 			else {
@@ -1040,8 +1049,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 					imp.setOverlay(overlay0);
 				}
 			}
-		}
-		else if (outlines!=null && lastSlice) {
+		} else if (outlines!=null && lastSlice) {
 			String title = imp!=null?imp.getTitle():"Outlines";
 			String prefix;
 			if (showChoice == MASKS)
@@ -1054,7 +1062,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 			outputImage = new ImagePlus(prefix+title, outlines);
 			outputImage.setCalibration(imp.getCalibration());
 			if (inSituShow) {
-				if (imp.getStackSize()==1)
+				if (imp.getStackSize()==1 && !Recorder.record)
 					Undo.setup(Undo.TRANSFORM, imp);
 				ImageStack outputStack = outputImage.getStack();
 				if (imp.getStackSize()>1 && outputStack.getSize()==1 && imp.getBitDepth()==8)
@@ -1065,7 +1073,7 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 				outputImage.show();
 		}
 		if (showResults && !processStack) {
-			if (showResultsWindow && rt.size()>0) {
+			if (showResultsTable && rt.size()>0) {
 				TextPanel tp = IJ.getTextPanel();
 				if (beginningCount>0 && tp!=null && tp.getLineCount()!=count)
 					rt.show("Results");
@@ -1120,6 +1128,12 @@ public class ParticleAnalyzer implements PlugInFilter, Measurements {
 		ParticleAnalyzer instance.	*/
 	public static void setResultsTable(ResultsTable rt) {
 		staticResultsTable = rt;
+	}
+
+	/** Sets the ResultsTable to be used by the next  
+		ParticleAnalyzer instance for the summary.	*/
+	public static void setSummaryTable(ResultsTable rt) {
+		staticSummaryTable = rt;
 	}
 
 	int getColumnID(String name) {

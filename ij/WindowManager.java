@@ -4,6 +4,7 @@ import ij.plugin.frame.Recorder;
 import ij.plugin.frame.Editor; 
 import ij.text.TextWindow;
 import ij.plugin.frame.PlugInFrame;
+import ij.plugin.frame.Commands;
 import ij.util.Tools;
 import ij.macro.Interpreter;
 import java.awt.*;
@@ -19,6 +20,7 @@ public class WindowManager {
 	private static Vector nonImageList = new Vector();	// list of non-image windows (Frames and Dialogs)
 	private static ImageWindow currentWindow;			 // active image window
 	private static Window frontWindow;
+	private static Window frontTable;
 	private static Frame frontFrame;
 	private static Hashtable tempImageTable = new Hashtable();
 	
@@ -139,6 +141,11 @@ public class WindowManager {
 	/** Returns the front most window or null. */
 	public static Window getActiveWindow() {
 		return frontWindow;
+	}
+
+	/** Returns the Window containing the active table, or null. */
+	public static Window getActiveTable() {
+		return frontTable;
 	}
 
 	/** Obsolete; replaced by getActiveWindow. */
@@ -325,6 +332,10 @@ public class WindowManager {
 
 	/** Returns a unique name by adding, before the extension,  -1, -2, etc. as needed. */
 	public static String getUniqueName(String name) {
+		return getUniqueName(null, name);
+	}
+
+	public static String getUniqueName(ImagePlus imp, String name) {
         String name2 = name;
         String extension = "";
         int len = name2.length();
@@ -335,11 +346,12 @@ public class WindowManager {
         }
         int lastDash = name2.lastIndexOf("-");
         len = name2.length();
+        if (imp!=null && imp.getProp("UniqueName")==null)
+        	lastDash = -1;
         if (lastDash!=-1&&len-lastDash<4&&lastDash<len-1&&Character.isDigit(name2.charAt(lastDash+1))&&name2.charAt(lastDash+1)!='0')
             name2 = name2.substring(0, lastDash);
         for (int i=1; i<=99; i++) {
             String name3 = name2+"-"+ i + extension;
-            //IJ.log(i+" "+name3);
             if (!isDuplicateName(name3))
                 return name3;
         }
@@ -362,6 +374,8 @@ public class WindowManager {
 				Menus.removeWindowMenuItem(index);
 				nonImageList.removeElement(win);
 			}
+			if (win!=null && win==frontTable)
+				frontTable = null;
 		}
 		setWindow(null);
 	}
@@ -375,25 +389,27 @@ public class WindowManager {
 		int index = imageList.indexOf(win);
 		if (index==-1)
 			return;  // not on the window list
-		imageList.removeElementAt(index);
-		activations.remove(win);
-		if (imageList.size()>1 && !Prefs.closingAll) {
-			ImageWindow win2 = activations.size()>0?(ImageWindow)activations.get(activations.size()-1):null;
-			setCurrentWindow(win2);
-		} else
-			currentWindow = null;
-		setTempCurrentImage(null);  //???
-		int nonImageCount = nonImageList.size();
-		if (nonImageCount>0)
-			nonImageCount++;
-		Menus.removeWindowMenuItem(nonImageCount+index);
-		Menus.updateMenus();
-		Undo.reset();
+		try {
+			imageList.remove(win);
+			activations.remove(win);
+			if (imageList.size()>1 && !Prefs.closingAll) {
+				ImageWindow win2 = activations.size()>0?(ImageWindow)activations.get(activations.size()-1):null;
+				setCurrentWindow(win2);
+			} else
+				currentWindow = null;
+			setTempCurrentImage(null);  //???
+			int nonImageCount = nonImageList.size();
+			if (nonImageCount>0)
+				nonImageCount++;
+			Menus.removeWindowMenuItem(nonImageCount+index);
+			Menus.updateMenus();
+			Undo.reset();
+		}  catch (Exception e) { }
 	}
 
 	/** The specified Window becomes the front window. */
 	public static void setWindow(Window win) {
-		//System.out.println("setWindow: "+win);
+		//System.out.println("setWindow(W): "+win);
 		frontWindow = win;
 		if (win instanceof Frame)
 			frontFrame = (Frame)win;
@@ -403,9 +419,11 @@ public class WindowManager {
 	public static void setWindow(Frame win) {
 		frontWindow = win;
 		frontFrame = win;
-		//System.out.println("Set window: "+(win!=null?win.getTitle():"null"));
+		if (win!=null && win instanceof TextWindow && !(win instanceof Editor) && !"Log".equals(((TextWindow)win).getTitle()))
+			frontTable = win;
+		//System.out.println("Set window(F): "+(win!=null?win.getTitle():"null"));
     }
-
+    
 	/** Closes all windows. Stops and returns false if an image or Editor "save changes" dialog is canceled. */
 	public synchronized static boolean closeAllWindows() {
 		Prefs.closingAll = true;
@@ -421,7 +439,9 @@ public class WindowManager {
 		Frame[] nonImages = getNonImageWindows();
 		for (int i=0; i<nonImages.length; i++) {
 			Frame frame = nonImages[i];
-			if (frame!=null && (frame instanceof Editor)) {
+			if (frame!=null && frame instanceof Commands)
+				((Commands)frame).close();
+			else if (frame!=null && (frame instanceof Editor)) {
 				((Editor)frame).close();
 				if (((Editor)frame).fileChanged())
 					return false;
@@ -590,6 +610,13 @@ public class WindowManager {
 		if (frame.getState()==Frame.ICONIFIED)
 			frame.setState(Frame.NORMAL);
 		frame.toFront();
+	}
+	
+	public static void toFront(Window window) {
+		if (window==null) return;
+		if (window instanceof Frame && ((Frame)window).getState()==Frame.ICONIFIED)
+			((Frame)window).setState(Frame.NORMAL);
+		window.toFront();
 	}
 	    
 }

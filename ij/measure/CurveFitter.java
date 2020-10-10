@@ -6,6 +6,7 @@ import ij.util.Tools;
 import ij.util.IJMath;
 import java.util.Arrays;
 import java.util.Hashtable;
+import java.awt.Color;
 
 /** Curve fitting class based on the Simplex method in the Minimizer class
  *
@@ -93,6 +94,24 @@ public class CurveFitter implements UserFunction{
 	"y = a*(1-exp(-b*x))^c",									//CHAPMAN
 	"y = a+b*erf((x-c)/d)"										//ERF; note that the c parameter is sqrt2 times the Gaussian
 	};
+	
+	/** ImageJ Macro language code for the built-in functions */
+	public static final String[] fMacro = {
+	"y = a+x*b","y = a+x*(b+x*c)",								//STRAIGHT_LINE,POLY2
+	"y = a+x*(b+x*(c+x*d))","y = a+x*(b+x*(c+x*(d+x*e)))",
+	"y = a*Math.exp(b*x)","y = a*Math.pow(x,b)", "y = a*Math.log(b*x)", //EXPONENTIAL,POWER,LOG
+	"y = d+(a-d)/(1+Math.pow(x/c,b))", "y = b*Math.pow(x-a,c)*Math.exp(-(x-a)/d)",	//RODBARD,GAMMA_VARIATE
+	"y = a+b*Math.log(x-c)", "y = c*Math.pow((x-a)/(d-x),1/b)",  	 //LOG2,RODBARD2
+	"y = a*Math.exp(-b*x)+c", "y = a+(b-a)*Math.exp(-(x-c)*(x-c)/(2*d*d))", //EXP_WITH_OFFSET,GAUSSIAN
+	"y = a*(1-Math.exp(-b*x))+c", "y = c*Math.pow((x-a)/(d-x),1/b)", //EXP_RECOVERY, INV_RODBARD
+	"y = a*Math.exp(b*x)", "y = a*Math.pow(x,b)",						//EXP_REGRESSION, POWER_REGRESSION
+	"y = a+x*(b+x*(c+x*(d+x*(e+x*f))))", "y = a+x*(b+x*(c+x*(d+x*(e+x*(f+x*g)))))",
+	"y = a+x*(b+x*(c+x*(d+x*(e+x*(f+x*(g+x*h))))))", "y = a+x*(b+x*(c+x*(d+x*(e+x*(f+x*(g+x*(h+x*i)))))))",
+	"y = a*Math.exp(-(x-b)*(x-b)/(2*c*c))",						//GAUSSIAN_NOOFFSET
+	"y = a*(1-Math.exp(-b*x))",									//EXP_RECOVERY_NOOFFSET
+	"y = a*Math.pow(1-Math.exp(-b*x),c)",						//CHAPMAN
+	"y = a+b*Math.erf((x-c)/d)"									//ERF; note that the c parameter is sqrt2 times the Gaussian sigma
+	};
 
 	/** @deprecated now in the Minimizer class (since ImageJ 1.46f).
 	 *	(probably of not much value for anyone anyhow?) */
@@ -132,7 +151,7 @@ public class CurveFitter implements UserFunction{
 	private String errorString;		// in case of error before invoking the minimizer
 	private static String[] sortedFitList; // names like fitList, but in more logical sequence
 	private static Hashtable<String, Integer> namesTable; // converts fitList String into number
-	
+
 	/** Construct a new CurveFitter. */
 	public CurveFitter (double[] xData, double[] yData) {
 		int cleanPoints = 0;
@@ -159,7 +178,7 @@ public class CurveFitter implements UserFunction{
 		}
 		numPoints = this.xData.length;
 	}
-	
+
 	/** Perform curve fitting with one of the built-in functions
 	 *			doFit(fitType) does the fit quietly
 	 *	Use getStatus() and/or getStatusString() to see whether fitting was (probably) successful and
@@ -334,10 +353,14 @@ public class CurveFitter implements UserFunction{
 	 *					   should be set to -1)
 	 */
 	public void setOffsetMultiplySlopeParams(int offsetParam, int multiplyParam, int slopeParam) {
+		if (multiplyParam >= 0 && slopeParam>=0)
+			throw new IllegalArgumentException("CurveFitter: only one of multiplyParam and slopeParam may be given (i.e., >=0)");
 		this.offsetParam = offsetParam;
 		hasSlopeParam = slopeParam >= 0;
 		factorParam = hasSlopeParam ? slopeParam : multiplyParam;
 		numRegressionParams = 0;
+		if (factorParam >= 0 && factorParam==offsetParam)
+			throw new IllegalArgumentException("CurveFitter: offsetParam and slopeParam/factorParam must be different");
 		if (offsetParam >=0) numRegressionParams++;
 		if (factorParam >=0) numRegressionParams++;
 	}
@@ -608,8 +631,11 @@ public class CurveFitter implements UserFunction{
 	 *	including the fit parameters).
 	 */
 	public String getResultString() {
-		String resultS =  "\nFormula: " + getFormula() +
-				"\nStatus: "+getStatusString();
+		String resultS =  "\nFormula: " + getFormula()
+				+ "\nMacro code: "+getMacroCode()
+				+ "\nStatus: "+getStatusString();
+		if (getStatus()==Minimizer.INITIALIZATION_FAILURE)
+			return resultS;
 		if (!linearRegressionUsed) resultS += "\nNumber of completed minimizations: " + minimizer.getCompletedMinimizations();
 		resultS += "\nNumber of iterations: " + getIterations();
 		if (!linearRegressionUsed) resultS += " (max: " + minimizer.getMaxIterations() + ")";
@@ -708,8 +734,26 @@ public class CurveFitter implements UserFunction{
 	public String getFormula() {
 		if (fitType==CUSTOM)
 			return customFormula;
-		else
-			return fList[fitType];
+		if (fitType==GAUSSIAN_INTERNAL)
+			fitType = GAUSSIAN;
+		else if (fitType==RODBARD_INTERNAL)
+			fitType = RODBARD;
+		return fList[fitType];
+	}
+	
+	/** Returns macro code of the form "y = ...x" for the fit function used.
+	 *  Note that this is not neccessarily the equation acutally used for the fit
+	 *  (for the various "linear regression" types and RODBARD2, the fit is done
+	 *  differently). Note that no macro code may be avialable for custom fits
+	 *  using the UserFunction interface. */
+	public String getMacroCode() {
+		if (fitType==CUSTOM)
+			return customFormula;
+		if (fitType==GAUSSIAN_INTERNAL)
+			fitType = GAUSSIAN;
+		else if (fitType==RODBARD_INTERNAL)
+			fitType = RODBARD;
+		return fMacro[fitType];
 	}
 
 	/** Returns an array of fit names with nicer sorting */
@@ -787,8 +831,10 @@ public class CurveFitter implements UserFunction{
 				params[i] = offset;
 			else if (i == factorParam)
 				params[i] = factor;
-			else
+			else if (iM>=0)
 				params[i] = params[iM--];
+			else
+				params[i] = Double.NaN;
 		}
 		params[numParams] = sumResidualsSqr;
 	}
@@ -901,6 +947,10 @@ public class CurveFitter implements UserFunction{
 	 *	and returns false if the data cannot be fitted because of negative x.
 	 *	In such a case, 'errorString' contains a message about the problem. */
 	private boolean makeInitialParamsAndVariations(int fitType) {
+		if (numPoints == 0) {
+			errorString = "No data to fit";
+			return false;
+		}
 		boolean hasInitialParams = initialParams != null;
 		boolean hasInitialParamVariations = initialParamVariations != null;
 		if (!hasInitialParams) {
@@ -1305,6 +1355,77 @@ public class CurveFitter implements UserFunction{
 			}
 		}
 		return index;
+	}
+
+	public Plot getPlot() {
+		return getPlot(100);
+	}
+
+	public Plot getPlot(int points) {
+		int PLOT_WIDTH=600, PLOT_HEIGHT=350;
+		double[] x = getXPoints();
+		double[] y = getYPoints();
+		if (getStatus()==Minimizer.INITIALIZATION_FAILURE) {
+			Plot plot = new Plot(getFormula(),"X","Y");
+			plot.setColor(Color.RED, Color.RED);
+			plot.addPoints(x, y, PlotWindow.CIRCLE);
+			plot.setColor(Color.BLUE);
+			plot.setFrameSize(PLOT_WIDTH, PLOT_HEIGHT);
+			plot.addLabel(0.02, 0.1, getName());
+			plot.addLabel(0.02, 0.2, getStatusString());
+			return plot;
+		}
+		int npoints = points;
+		if (npoints<x.length)
+			npoints = x.length; //or 2*x.length-1; for 2 values per data point
+		if (npoints>1000)
+			npoints = 1000;
+		double[] a = Tools.getMinMax(x);
+		double xmin=a[0], xmax=a[1];
+		if (points==256) {
+			npoints = points;
+			xmin = 0;
+			xmax = 255;
+		}
+		a = Tools.getMinMax(y);
+		double ymin=a[0], ymax=a[1]; //y range of data points
+		float[] px = new float[npoints];
+		float[] py = new float[npoints];
+		double inc = (xmax-xmin)/(npoints-1);
+		double tmp = xmin;
+		for (int i=0; i<npoints; i++) {
+			px[i]=(float)tmp;
+			tmp += inc;
+		}
+		double[] params = getParams();
+		for (int i=0; i<npoints; i++)
+			py[i] = (float)f(params, px[i]);
+		a = Tools.getMinMax(py);
+		double dataRange = ymax - ymin;
+		ymin = Math.max(ymin - dataRange, Math.min(ymin, a[0])); //expand y range for curve, but not too much
+		ymax = Math.min(ymax + dataRange, Math.max(ymax, a[1]));
+		Plot plot = new Plot(getFormula(), "X", "Y", px, py);
+		plot.setLabel(0, "fit");
+		plot.setLimits(xmin, xmax, ymin, ymax);
+		plot.setFrameSize(PLOT_WIDTH, PLOT_HEIGHT);
+		plot.setColor(Color.RED, Color.RED);
+		plot.addPoints(x, y, PlotWindow.CIRCLE);
+		plot.setLabel(1, "data");
+		plot.setColor(Color.BLUE); //will be used for the data in the constructor
+		StringBuilder legend = new StringBuilder(100);
+		legend.append(getName()); legend.append('\n');
+		legend.append(getFormula()); legend.append('\n');
+        double[] p = getParams();
+        int n = getNumParams();
+        char pChar = 'a';
+        for (int i = 0; i < n; i++) {
+			legend.append(pChar+" = "+IJ.d2s(p[i],5,9)+'\n');
+			pChar++;
+        }
+		legend.append("R^2 = "+IJ.d2s(getRSquared(),4)); legend.append('\n');
+		plot.addLabel(0.02, 0.1, legend.toString());
+		plot.setColor(Color.BLUE);
+		return plot;
 	}
 
 }

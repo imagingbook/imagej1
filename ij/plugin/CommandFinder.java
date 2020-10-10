@@ -26,6 +26,7 @@ package ij.plugin;
 import ij.*;
 import ij.text.*;
 import ij.plugin.frame.Editor;
+import ij.gui.GUI;
 import ij.gui.HTMLDialog;
 import java.awt.*;
 import java.awt.event.*;
@@ -46,7 +47,7 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 	private static JFrame frame;
 	private JTextField prompt;
 	private JScrollPane scrollPane;
-	private JButton runButton, sourceButton, closeButton, helpButton;
+	private JButton runButton, sourceButton, closeButton, commandsButton, helpButton;
 	private JCheckBox closeCheckBox;
 	private Hashtable commandsHash;
 	private String [] commands;
@@ -132,6 +133,8 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 			showSource(tableModel.getCommand(row));
 		} else if (source == closeButton) {
 			closeWindow();
+		} else if (source == commandsButton) {
+			IJ.doCommand("Commands...");
 		} else if (source == helpButton) {
 			String text = "<html>Shortcuts:<br>"
 				+ "&emsp;&uarr; &darr;&ensp; Select items<br>"
@@ -421,11 +424,16 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 
 
 		closeCheckBox = new JCheckBox("Close window after running command", closeWhenRunning);
+		GUI.scale(closeCheckBox);
 		closeCheckBox.addItemListener(this);
 
 		JPanel northPanel = new JPanel(new BorderLayout());
-		northPanel.add(new JLabel(" Search:"), BorderLayout.WEST);
+		JLabel searchLabel = new JLabel(" Search:");
+		GUI.scale(searchLabel);
+		northPanel.add(searchLabel, BorderLayout.WEST);
 		prompt = new JTextField("", 20);
+		GUI.scale(prompt);
+
 		prompt.getDocument().addDocumentListener(new PromptDocumentListener());
 		prompt.addKeyListener(this);
 		northPanel.add(prompt);
@@ -438,6 +446,8 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 		table.setColumnSelectionAllowed(false);
 		//table.setAutoCreateRowSorter(true);
 		tableModel.setColumnWidths(table.getColumnModel());
+		GUI.scale(table);
+
 		Dimension dim = new Dimension(TABLE_WIDTH, table.getRowHeight()*TABLE_ROWS);
 		table.setPreferredScrollableViewportSize(dim);
 		table.addKeyListener(this);
@@ -474,16 +484,24 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 		contentPane.add(scrollPane, BorderLayout.CENTER);
 
 		runButton = new JButton("Run");
+		GUI.scale(runButton);
 		sourceButton = new JButton("Source");
+		GUI.scale(sourceButton);
 		closeButton = new JButton("Close");
+		GUI.scale(closeButton);
+		commandsButton = new JButton("Commands");
+		GUI.scale(commandsButton);
 		helpButton = new JButton("Help");
+		GUI.scale(helpButton);
 		runButton.addActionListener(this);
 		sourceButton.addActionListener(this);
 		closeButton.addActionListener(this);
+		commandsButton.addActionListener(this);
 		helpButton.addActionListener(this);
 		runButton.addKeyListener(this);
 		sourceButton.addKeyListener(this);
 		closeButton.addKeyListener(this);
+		commandsButton.addKeyListener(this);
 		helpButton.addKeyListener(this);
 
 		JPanel southPanel = new JPanel();
@@ -496,6 +514,7 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 		buttonsPanel.add(runButton);
 		buttonsPanel.add(sourceButton);
 		buttonsPanel.add(closeButton);
+		buttonsPanel.add(commandsButton);
 		buttonsPanel.add(helpButton);
 
 		southPanel.add(optionsPanel, BorderLayout.CENTER);
@@ -503,14 +522,12 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 
 		contentPane.add(southPanel, BorderLayout.SOUTH);
 
-		Dimension screenSize = IJ.getScreenSize();
+		Rectangle screen = GUI.getMaxWindowBounds(IJ.getInstance());
 
 		frame.pack();
 
 		int dialogWidth = frame.getWidth();
 		int dialogHeight = frame.getHeight();
-		int screenWidth = (int)screenSize.getWidth();
-		int screenHeight = (int)screenSize.getHeight();
 
 		Point pos = imageJ.getLocationOnScreen();
 		Dimension size = imageJ.getSize();
@@ -520,18 +537,12 @@ public class CommandFinder implements PlugIn, ActionListener, WindowListener, Ke
 		   would push the dialog off to the screen to any
 		   side, adjust it so that it's on the screen.
 		*/
-		int initialX = (int)pos.getX() + 10;
-		int initialY = (int)pos.getY() + size.height+10;
-
-		if (initialX+dialogWidth>screenWidth)
-			initialX = screenWidth-dialogWidth;
-		if (initialX<0)
-			initialX = 0;
-		if (initialY+dialogHeight>screenHeight)
-			initialY = screenHeight-dialogHeight;
-		if (initialY<0)
-			initialY = 0;
-
+		int initialX = pos.x + 10;
+		int initialY = pos.y + 10 + size.height;
+		
+		initialX = Math.max(screen.x, Math.min(initialX, screen.x+screen.width-dialogWidth));
+		initialY = Math.max(screen.y, Math.min(initialY, screen.y+screen.height-dialogHeight));
+		
 		frame.setLocation(initialX,initialY);
 		frame.setVisible(true);
 		frame.toFront();

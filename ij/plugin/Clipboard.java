@@ -8,12 +8,14 @@ import ij.*;
 import ij.process.*;
 import ij.gui.*;
 import ij.plugin.frame.Editor;
+import ij.plugin.frame.Recorder;
 import ij.text.TextWindow;
 import ij.util.Tools;
 	
 /**	Copies/pastes images to/from the system clipboard. */
 public class Clipboard implements PlugIn, Transferable {
 	static java.awt.datatransfer.Clipboard clipboard;
+	private ImagePlus gImp;
 	
 	public void run(String arg) {
 		if (IJ.altKeyDown()) {
@@ -36,6 +38,16 @@ public class Clipboard implements PlugIn, Transferable {
 			showInternalClipboard();
 	}
 	
+	/** Copies the contents of the specified image, or selection, to the system clicpboard. */
+	public static void copyToSystem(ImagePlus imp) {
+		Clipboard cplugin = new Clipboard();
+		cplugin.gImp = imp;
+		cplugin.setup();
+		try {
+			cplugin.clipboard.setContents(cplugin, null);
+		} catch (Throwable t) {}
+	}
+	
 	void copy(boolean cut) {
 		ImagePlus imp = WindowManager.getCurrentImage();
 		if (imp!=null) {
@@ -44,6 +56,12 @@ public class Clipboard implements PlugIn, Transferable {
 	 			imp.changes = true;
 	 	} else
 	 		IJ.noImage();
+	 	if (Recorder.scriptMode()) {
+	 		if (cut)
+				Recorder.recordCall("imp.cut();");
+			else
+				Recorder.recordCall("imp.copy();");
+	 	}
 	}
 	
 	private ImagePlus flatten(ImagePlus imp) {
@@ -67,9 +85,11 @@ public class Clipboard implements PlugIn, Transferable {
 			showSystemClipboard();
 		else {
 			ImagePlus imp = WindowManager.getCurrentImage();
-			if (imp!=null)
+			if (imp!=null) {
 				imp.paste();
-			else
+				if (Recorder.scriptMode())
+					Recorder.recordCall("imp.paste();");
+			} else
 				showInternalClipboard	();
 		}
 	}
@@ -80,10 +100,13 @@ public class Clipboard implements PlugIn, Transferable {
 	}
 	
 	void copyToSystem() {
+		this.gImp = WindowManager.getCurrentImage();
 		setup();
 		try {
 			clipboard.setContents(this, null);
 		} catch (Throwable t) {}
+	 	if (Recorder.scriptMode())
+			Recorder.recordCall("imp.copyToSystem();");
 	}
 	
 	void showSystemClipboard() {
@@ -134,28 +157,19 @@ public class Clipboard implements PlugIn, Transferable {
 	public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
 		if (!isDataFlavorSupported(flavor))
 			throw new UnsupportedFlavorException(flavor);
-		ImagePlus imp = WindowManager.getCurrentImage();
-		if (imp!=null) {
-			imp = flatten(imp);
-			ImageProcessor ip;
-			if (imp.isComposite()) {
-				ip = new ColorProcessor(imp.getImage());
-				ip.setRoi(imp.getRoi());
-			} else	
-				ip = imp.getProcessor();
-			ip = ip.crop();
-			int w = ip.getWidth();
-			int h = ip.getHeight();
-			IJ.showStatus(w+"x"+h+ " image copied to system clipboard");
-			Image img = IJ.getInstance().createImage(w, h);
-			Graphics g = img.getGraphics();
-			g.drawImage(ip.createImage(), 0, 0, null);
-			g.dispose();
-			return img;
-		} else {
-			//IJ.noImage();
+		ImagePlus imp = gImp!=null?gImp:WindowManager.getCurrentImage();
+		if (imp==null)
 			return null;
+		Roi roi = imp.getRoi();
+		if (roi!=null && !roi.isLine()) {
+			Rectangle bounds = roi.getBounds();
+			if (!(bounds.x==0&&bounds.y==0&&bounds.width==imp.getWidth()&&bounds.height==imp.getHeight()))
+				imp = imp.crop();
 		}
+		boolean overlay = imp.getOverlay()!=null && !imp.getHideOverlay();
+		if (overlay && !imp.tempOverlay())
+			imp = imp.flatten(); 
+		return imp.getImage();
 	}
 	
 	void showInternalClipboard() {

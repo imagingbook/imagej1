@@ -35,7 +35,7 @@ public class StackEditor implements PlugIn {
  		if (!imp.lock()) return;
 		int id = 0;
 		ImageStack stack = imp.getStack();
-		if (stack.getSize()==1) {
+		if (stack.size()==1) {
 			String label = stack.getSliceLabel(1);
 			if (label!=null && label.indexOf("\n")!=-1)
 				stack.setSliceLabel(null, 1);
@@ -66,7 +66,7 @@ public class StackEditor implements PlugIn {
 		ImageStack stack = imp.getStack();
 		int n = imp.getCurrentSlice();
  		stack.deleteSlice(n);
- 		if (stack.getSize()==1) {
+ 		if (stack.size()==1) {
 			String label = stack.getSliceLabel(1);
  			if (label!=null) imp.setProperty("Label", label);
  		}
@@ -257,13 +257,15 @@ public class StackEditor implements PlugIn {
 		if (!imp.lock())
 			return;
 		ImageStack stack = imp.getStack();
-		int size = stack.getSize();
+		int size = stack.size();
 		if (size>30 && !IJ.isMacro()) {
 			boolean ok = IJ.showMessageWithCancel("Convert to Images?",
 			"Are you sure you want to convert this\nstack to "
 			+size+" separate windows?");
-			if (!ok)
-				{imp.unlock(); return;}
+			if (!ok) {
+				imp.unlock();
+				return;
+			}
 		}
 		Calibration cal = imp.getCalibration();
 		CompositeImage cimg = imp.isComposite()?(CompositeImage)imp:null;
@@ -272,6 +274,8 @@ public class StackEditor implements PlugIn {
 		int lastImageID = 0;
 		for (int i=1; i<=size; i++) {
 			String label = stack.getShortSliceLabel(i);
+			if (label!=null && (label.contains("/") || label.contains("\\") || label.contains(":")))
+				label = null;
 			String title = label!=null&&!label.equals("")?label:getTitle(imp, i);
 			ImageProcessor ip = stack.getProcessor(i);
 			if (cimg!=null) {
@@ -314,8 +318,21 @@ public class StackEditor implements PlugIn {
 
 	String getTitle(ImagePlus imp, int n) {
 		String digits = "00000000"+n;
-		return imp.getShortTitle()+"-"+digits.substring(digits.length()-4,digits.length());
+		return getShortTitle(imp)+"-"+digits.substring(digits.length()-4,digits.length());
 	}
+	
+	/** Returns a shortened version of image name that does not 
+		include spaces or a file name extension. */
+	private String getShortTitle(ImagePlus imp) {
+		String title = imp.getTitle();
+		int index = title.indexOf(' ');
+		if (index>-1)
+			title = title.substring(0, index);
+		index = title.lastIndexOf('.');
+		if (index>0)
+			title = title.substring(0, index);
+		return title;
+    }
 	
 }
 

@@ -18,17 +18,15 @@ public class RoiEnlarger implements PlugIn {
 			IJ.error("Enlarge", "This command requires an area selection");
 			return;
 		}
+		if (!imp.okToDeleteRoi())
+			return;
 		double n = showDialog(imp, defaultDistance);
 		if (n==Double.NaN)
 			return;
-		if (n>255) {
-			IJ.error("Enlarge", "Cannot enlarge by more than 255 pixels"); 
-			return;
-		}
-		Roi roi2 = enlarge(roi, n);
+		Roi roi2 = Math.abs(n)<256?enlarge255(roi,n):enlarge(roi,n);
 		if (roi2!=null) {
 			imp.setRoi(roi2);
-			Roi.previousRoi = roi;
+			Roi.setPreviousRoi(roi);
 			defaultDistance = n;
 		}
 	}
@@ -66,32 +64,31 @@ public class RoiEnlarger implements PlugIn {
 		int n = (int)Math.round(pixels);
 		if (type==Roi.RECTANGLE || type==Roi.OVAL)
 			return enlargeRectOrOval(roi, n);
-		if (n>255)
-			n = 255;
 		if (n<0)
 			return shrink(roi, -n);
 		Rectangle bounds = roi.getBounds();
 		int width = bounds.width;
 		int height = bounds.height;
-		width += 2*n +2;
-		height += 2*n +2;
+		width += 2*n + 2;
+		height += 2*n + 2;
 		ImageProcessor ip = new ByteProcessor(width, height);
 		ip.invert();
 		roi.setLocation(n+1, n+1);
 		ip.setColor(0);
 		ip.fill(roi);
-		roi.setLocation(bounds.x, bounds.y);
-		boolean bb = Prefs.blackBackground;
-		Prefs.blackBackground = true;
-		new EDM().toEDM(ip);
-		//new ImagePlus("ip", ip).show();
-		Prefs.blackBackground = bb;
-		ip.setThreshold(0, n, ImageProcessor.NO_LUT_UPDATE);
+		ip.setThreshold(0, 0, ImageProcessor.NO_LUT_UPDATE);
 		Roi roi2 = (new ThresholdToSelection()).convert(ip);
+		Rectangle bounds2 = roi2.getBounds();
+		int xoffset = bounds2.x - (n+1);
+		int yoffset = bounds2.y - (n+1);
+		roi.setLocation(bounds.x, bounds.y);
+		FloatProcessor edm = new EDM().makeFloatEDM (ip, 0, false);
+		edm.setThreshold(0, n, ImageProcessor.NO_LUT_UPDATE);
+		roi2 = (new ThresholdToSelection()).convert(edm);
 		if (roi2==null)
-			return roi;
-		roi2.setLocation(bounds.x-n, bounds.y-n);
-		roi2.setStrokeColor(roi.getStrokeColor());
+			return roi;	
+		roi2.copyAttributes(roi);
+		roi2.setLocation(bounds.x-n+xoffset, bounds.y-n+yoffset);
 		if (roi.getStroke()!=null)
 			roi2.setStroke(roi.getStroke());
 		return roi2;
@@ -105,13 +102,78 @@ public class RoiEnlarger implements PlugIn {
 		bounds.height += 2*n;
 		if (bounds.width<=0 || bounds.height<=0)
 			return roi;
+		Roi roi2 = null;
 		if (roi.getType()==Roi.RECTANGLE)
-			return new Roi(bounds.x, bounds.y, bounds.width, bounds.height);
+			roi2 = new Roi(bounds.x, bounds.y, bounds.width, bounds.height);
 		else
-			return new OvalRoi(bounds.x, bounds.y, bounds.width, bounds.height);
+			roi2 = new OvalRoi(bounds.x, bounds.y, bounds.width, bounds.height);
+		roi2.copyAttributes(roi);
+		return roi2;
 	}
    
 	private static Roi shrink(Roi roi, int n) {
+		Rectangle bounds = roi.getBounds();
+		int width = bounds.width + 2;
+		int height = bounds.height + 2;
+		ImageProcessor ip = new ByteProcessor(width, height);
+		roi.setLocation(1, 1);
+		ip.setColor(255);
+		ip.fill(roi);
+		roi.setLocation(bounds.x, bounds.y);
+		FloatProcessor edm = new EDM().makeFloatEDM (ip, 0, false);		
+		edm.setThreshold(n+1, Float.MAX_VALUE, ImageProcessor.NO_LUT_UPDATE);
+		Roi roi2 = (new ThresholdToSelection()).convert(edm);
+		if (roi2==null)
+			return roi;
+		Rectangle bounds2 = roi2.getBounds();
+		if (bounds2.width<=0 && bounds2.height<=0)
+			return roi;
+		roi2.copyAttributes(roi);
+		roi2.setLocation(bounds.x+bounds2.x-1, bounds.y+bounds2.y-1);
+		return roi2;
+	}
+	
+	public static Roi enlarge255(Roi roi, double pixels) {
+		if (pixels==0)
+			return roi;
+		int type = roi.getType();
+		int n = (int)Math.round(pixels);
+		if (type==Roi.RECTANGLE || type==Roi.OVAL)
+			return enlargeRectOrOval(roi, n);
+		if (n<0)
+			return shrink255(roi, -n);
+		Rectangle bounds = roi.getBounds();
+		int width = bounds.width;
+		int height = bounds.height;
+		width += 2*n + 2;
+		height += 2*n + 2;
+		ImageProcessor ip = new ByteProcessor(width, height);
+		ip.invert();
+		roi.setLocation(n+1, n+1);
+		ip.setColor(0);
+		ip.fill(roi);
+		ip.setThreshold(0, 0, ImageProcessor.NO_LUT_UPDATE);
+		Roi roi2 = (new ThresholdToSelection()).convert(ip);
+		Rectangle bounds2 = roi2.getBounds();
+		int xoffset = bounds2.x - (n+1);
+		int yoffset = bounds2.y - (n+1);
+		roi.setLocation(bounds.x, bounds.y);
+		boolean bb = Prefs.blackBackground;
+		Prefs.blackBackground = true;
+		new EDM().toEDM(ip);
+		Prefs.blackBackground = bb;
+		ip.setThreshold(0, n, ImageProcessor.NO_LUT_UPDATE);
+		roi2 = (new ThresholdToSelection()).convert(ip);
+		if (roi2==null)
+			return roi;	
+		roi2.copyAttributes(roi);
+		roi2.setLocation(bounds.x-n+xoffset, bounds.y-n+yoffset);
+		if (roi.getStroke()!=null)
+			roi2.setStroke(roi.getStroke());
+		return roi2;
+	}
+	
+	private static Roi shrink255(Roi roi, int n) {
 		Rectangle bounds = roi.getBounds();
 		int width = bounds.width + 2;
 		int height = bounds.height + 2;
@@ -131,6 +193,7 @@ public class RoiEnlarger implements PlugIn {
 		Rectangle bounds2 = roi2.getBounds();
 		if (bounds2.width<=0 && bounds2.height<=0)
 			return roi;
+		roi2.copyAttributes(roi);
 		roi2.setLocation(bounds.x+bounds2.x-1, bounds.y+bounds2.y-1);
 		return roi2;
 	}

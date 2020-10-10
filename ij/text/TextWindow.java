@@ -29,6 +29,7 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
 	int[] sizes = {9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 36, 48, 60, 72};
 	int fontSize = (int)Prefs.get(FONT_SIZE, 5);
 	MenuBar mb;
+	private static Font font;
  
 	/**
 	* Opens a new single-column text window.
@@ -113,7 +114,8 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
 			setLocation(loc);
 		} else {
 			setSize(width, height);
-			if (!IJ.debugMode) GUI.center(this);
+			if (!IJ.debugMode)
+				GUI.centerOnImageJScreen(this);
 		}
 		show();
 		WindowManager.setWindow(this);
@@ -135,6 +137,7 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
 			WindowManager.addWindow(this);
 			setSize(width, height);
 			show();
+			WindowManager.setWindow(this);
 		} else
 			dispose();
 	}
@@ -198,7 +201,10 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
 	}
 	
 	void setFont() {
-        textPanel.setFont(new Font("SanSerif", Font.PLAIN, sizes[fontSize]), antialiased.getState());
+		if (font!=null)
+       		textPanel.setFont(font, antialiased.getState());
+       	else
+       		textPanel.setFont(new Font("SanSerif", Font.PLAIN, sizes[fontSize]), antialiased.getState());
 	}
 	
 	boolean openFile(String path) {
@@ -263,6 +269,8 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
 		int id = e.getID();
 		if (id==WindowEvent.WINDOW_CLOSING)
 			close();	
+		else if (id==WindowEvent.WINDOW_ACTIVATED && !"Log".equals(getTitle()))
+			WindowManager.setWindow(this);
 	}
 
 	public void itemStateChanged(ItemEvent e) {
@@ -338,7 +346,12 @@ public class TextWindow extends Frame implements ActionListener, FocusListener, 
                 fontSize = 0;
         }
         IJ.showStatus(sizes[fontSize]+" point");
+        font = null;
         setFont();
+    }
+    
+    public static void setFont(String name, int style, int size) {
+    	font = new Font(name,style,size);
     }
 
 	void saveSettings() {

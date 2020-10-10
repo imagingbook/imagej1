@@ -104,7 +104,7 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 			for (int i=0; i<n; i++) {
 				info[i] = (FileInfo)fi.clone();
 				info[i].nImages = 1;
-				info[i].longOffset = fi.getOffset() + i*(size + fi.gapBetweenImages);
+				info[i].longOffset = fi.getOffset() + i*(size + fi.getGap());
 			}
 		}
 		nImages = info.length;
@@ -142,13 +142,13 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 	}
 	
 	private int validateNImages(FileInfo fi) {
-		File f = new File(fi.directory + fi.fileName);
+		File f = new File(fi.getFilePath());
 		if (!f.exists())
 			return fi.nImages;
 		long fileLength = f.length();
 		long bytesPerImage = fi.width*fi.height*fi.getBytesPerPixel();
 		for (int i=fi.nImages-1; i>=0; i--) {
-			long offset =  fi.getOffset() + i*(bytesPerImage+fi.gapBetweenImages);
+			long offset =  fi.getOffset() + i*(bytesPerImage+fi.getGap());
 			if (offset+bytesPerImage<=fileLength)
 				return i+1;
 		}
@@ -190,6 +190,7 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 		were 1<=n<=nImages. Returns null if the stack is empty.
 	*/
 	public ImageProcessor getProcessor(int n) {
+		n = translate(n);  // update n for hyperstacks not in default CZT order
 		if (n<1 || n>nImages)
 			throw new IllegalArgumentException("Argument out of range: "+n);
 		//if (n>1) IJ.log("  "+(info[n-1].getOffset()-info[n-2].getOffset()));
@@ -203,6 +204,8 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 		} else {
 			FileOpener fo = new FileOpener(info[n-1]);
 			imp = fo.openImage();
+			if (info[n-1].fileType==FileInfo.RGB48 && info[n-1].sliceNumber>0)
+				imp.setSlice(info[n-1].sliceNumber);
 		}
 		if (imp!=null)
 			return imp.getProcessor();
@@ -219,7 +222,11 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 		}
 	 }
  
-	 /** Returns the number of images in this stack. */
+	/** Returns the number of slices in this stack. */
+	public int size() {
+		return getSize();
+	}
+
 	public int getSize() {
 		return nImages;
 	}
@@ -255,5 +262,23 @@ public class FileInfoVirtualStack extends VirtualStack implements PlugIn {
 		}
 		info[nImages-1] = fileInfo;
 	}
+	
+	@Override
+	public String getDirectory() {
+		if (info!=null && info.length>0)
+			return info[0].directory;
+		else
+			return null;
+	}
+		
+	@Override
+	public String getFileName(int n) {
+		int index = n - 1;
+		if (index>=0 && info!=null && info.length>index)
+			return info[index].fileName;
+		else
+			return null;
+	}
+
 		
 }

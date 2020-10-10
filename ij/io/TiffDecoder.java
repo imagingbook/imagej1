@@ -1,5 +1,6 @@
 package ij.io;
 import ij.util.Tools;
+import ij.IJ;
 import java.io.*;
 import java.util.*;
 import java.net.*;
@@ -29,7 +30,7 @@ public class TiffDecoder {
 	public static final int RESOLUTION_UNIT = 296;
 	public static final int SOFTWARE = 305;
 	public static final int DATE_TIME = 306;
-	public static final int ARTEST = 315;
+	public static final int ARTIST = 315;
 	public static final int HOST_COMPUTER = 316;
 	public static final int PREDICTOR = 317;
 	public static final int COLOR_MAP = 320;
@@ -61,6 +62,7 @@ public class TiffDecoder {
 	static final int PLOT = 0x706c6f74;    // "plot" (serialized plot)
 	static final int ROI = 0x726f6920;     // "roi " (ROI)
 	static final int OVERLAY = 0x6f766572; // "over" (overlay)
+	static final int PROPERTIES = 0x70726f70; // "prop" (properties)
 	
 	private String directory;
 	private String name;
@@ -75,6 +77,9 @@ public class TiffDecoder {
 	private int photoInterp;
 		
 	public TiffDecoder(String directory, String name) {
+		if (directory==null)
+			directory = "";
+		directory = IJ.addSeparator(directory);
 		this.directory = directory;
 		this.name = name;
 	}
@@ -206,7 +211,8 @@ public class TiffDecoder {
             if (index2>0) {
                 String images = id.substring(index1+7,index2);
                 int n = (int)Tools.parseDouble(images, 0.0);
-                if (n>1) fi.nImages = n;
+                if (n>1 && fi.compression==FileInfo.COMPRESSION_NONE)
+                	fi.nImages = n;
             }
         }
 	}
@@ -327,7 +333,7 @@ public class TiffDecoder {
 			case RESOLUTION_UNIT: name="ResolutionUnit"; break;
 			case SOFTWARE: name="Software"; break;
 			case DATE_TIME: name="DateTime"; break;
-			case ARTEST: name="Artest"; break;
+			case ARTIST: name="Artist"; break;
 			case HOST_COMPUTER: name="HostComputer"; break;
 			case PLANAR_CONFIGURATION: name="PlanarConfiguration"; break;
 			case COMPRESSION: name="Compression"; break; 
@@ -439,7 +445,7 @@ public class TiffDecoder {
 							else if (bitDepth==16)
 								fi.fileType = FileInfo.GRAY16_UNSIGNED;
 							else
-								error("ImageJ can only open 8 and 16 bit/channel images ("+bitDepth+")");
+								error("ImageJ cannot open interleaved "+bitDepth+"-bit images.");
 							in.seek(saveLoc);
 						}
 						break;
@@ -507,7 +513,7 @@ public class TiffDecoder {
 							"compressed in this fashion ("+value+")");
 					}
 					break;
-				case SOFTWARE: case DATE_TIME: case HOST_COMPUTER: case ARTEST:
+				case SOFTWARE: case DATE_TIME: case HOST_COMPUTER: case ARTIST:
 					if (ifdCount==1) {
 						byte[] bytes = getString(count, lvalue);
 						String s = bytes!=null?new String(bytes):null;
@@ -595,32 +601,46 @@ public class TiffDecoder {
 		in.seek(loc);
 		int n = metaDataCounts.length;
 		int hdrSize = metaDataCounts[0];
-		if (hdrSize<12 || hdrSize>804)
-			{in.seek(saveLoc); return;}
+		if (hdrSize<12 || hdrSize>804) {
+			in.seek(saveLoc);
+			return;
+		}
 		int magicNumber = getInt();
-		if (magicNumber!=MAGIC_NUMBER)  // "IJIJ"
-			{in.seek(saveLoc); return;}
+		if (magicNumber!=MAGIC_NUMBER)  { // "IJIJ"
+			in.seek(saveLoc);
+			return;
+		}
 		int nTypes = (hdrSize-4)/8;
 		int[] types = new int[nTypes];
-		int[] counts = new int[nTypes];
-		
-		if (debugMode) dInfo += "Metadata:\n";
+		int[] counts = new int[nTypes];		
+		if (debugMode) {
+			dInfo += "Metadata:\n";
+			dInfo += "   Entries: "+(metaDataCounts.length-1)+"\n";
+			dInfo += "   Types: "+nTypes+"\n";
+		}
 		int extraMetaDataEntries = 0;
+		int index = 1;
 		for (int i=0; i<nTypes; i++) {
 			types[i] = getInt();
 			counts[i] = getInt();
 			if (types[i]<0xffffff)
 				extraMetaDataEntries += counts[i];
 			if (debugMode) {
-				String id = "";
-				if (types[i]==INFO) id = " (Info property)";
-				if (types[i]==LABELS) id = " (slice labels)";
-				if (types[i]==RANGES) id = " (display ranges)";
-				if (types[i]==LUTS) id = " (luts)";
-				if (types[i]==PLOT) id = " (plot)";
-				if (types[i]==ROI) id = " (roi)";
-				if (types[i]==OVERLAY) id = " (overlay)";
-				dInfo += "   "+i+" "+Integer.toHexString(types[i])+" "+counts[i]+id+"\n";
+				String id = "unknown";
+				if (types[i]==INFO) id = "Info property";
+				if (types[i]==LABELS) id = "slice labels";
+				if (types[i]==RANGES) id = "display ranges";
+				if (types[i]==LUTS) id = "luts";
+				if (types[i]==PLOT) id = "plot";
+				if (types[i]==ROI) id = "roi";
+				if (types[i]==OVERLAY) id = "overlay";
+				if (types[i]==PROPERTIES) id = "properties";
+				int len = metaDataCounts[index];
+				int count = counts[i];
+				index += count;
+				if (index>=metaDataCounts.length) index=1;
+				String lenstr = count==1?", length=":", length[0]=";
+				dInfo += "   "+i+", type="+id+", count="+count+lenstr+len+"\n";
 			}
 		}
 		fi.metaDataTypes = new int[extraMetaDataEntries];
@@ -642,6 +662,8 @@ public class TiffDecoder {
 				getRoi(start, fi);
 			else if (types[i]==OVERLAY)
 				getOverlay(start, start+counts[i]-1, fi);
+			else if (types[i]==PROPERTIES)
+				getProperties(start, start+counts[i]-1, fi);
 			else if (types[i]<0xffffff) {
 				for (int j=start; j<start+counts[i]; j++) { 
 					int len = metaDataCounts[j]; 
@@ -740,6 +762,28 @@ public class TiffDecoder {
 		}
 	}
 
+	void getProperties(int first, int last, FileInfo fi) throws IOException {
+		fi.properties = new String[last-first+1];
+	    int index = 0;
+	    byte[] buffer = new byte[metaDataCounts[first]];
+		for (int i=first; i<=last; i++) {
+			int len = metaDataCounts[i];
+			if (len>buffer.length)
+				buffer = new byte[len];
+			in.readFully(buffer, len);
+			len /= 2;
+			char[] chars = new char[len];
+			if (littleEndian) {
+				for (int j=0, k=0; j<len; j++)
+					chars[j] = (char)(buffer[k++]&255 + ((buffer[k++]&255)<<8));
+			} else {
+				for (int j=0, k=0; j<len; j++)
+					chars[j] = (char)(((buffer[k++]&255)<<8) + buffer[k++]&255);
+			}
+			fi.properties[index++] = new String(chars);
+		}
+	}
+
 	void error(String message) throws IOException {
 		if (in!=null) in.close();
 		throw new IOException(message);
@@ -763,7 +807,7 @@ public class TiffDecoder {
 		long ifdOffset;
 		ArrayList list = new ArrayList();
 		if (in==null)
-			in = new RandomAccessStream(new RandomAccessFile(new File(directory, name), "r"));
+			in = new RandomAccessStream(new RandomAccessFile(new File(directory+name), "r"));
 		ifdOffset = OpenImageFileHeader();
 		if (ifdOffset<0L) {
 			in.close();
@@ -778,7 +822,7 @@ public class TiffDecoder {
 				ifdOffset = ((long)getInt())&0xffffffffL;
 			} else
 				ifdOffset = 0L;
-			if (debugMode && ifdCount<10) dInfo += "  nextIFD=" + ifdOffset + "\n";
+			if (debugMode && ifdCount<10) dInfo += "nextIFD=" + ifdOffset + "\n";
 			if (fi!=null && fi.nImages>1)
 				ifdOffset = 0L;   // ignore extra IFDs in ImageJ and NIH Image stacks
 		}

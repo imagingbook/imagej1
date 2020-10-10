@@ -110,24 +110,33 @@ public class DICOM extends ImagePlus implements PlugIn {
 		if (fi!=null && fi.width>0 && fi.height>0 && fi.offset>0) {
 			FileOpener fo = new FileOpener(fi);
 			ImagePlus imp = fo.openImage();
-			ImageProcessor ip = imp.getProcessor();
-			boolean openAsFloat = (dd.rescaleSlope!=1.0&&!Prefs.ignoreRescaleSlope) || Prefs.openDicomsAsFloat;
+			boolean openAsFloat = (dd.rescaleSlope!=1.0&&!Prefs.ignoreRescaleSlope) || Prefs.openDicomsAsFloat;		
+			String options = Macro.getOptions();
 			if (openAsFloat) {
-				ip = ip.convertToFloat();
+				IJ.run(imp, "32-bit", "");
 				if (dd.rescaleSlope!=1.0)
-					ip.multiply(dd.rescaleSlope);
+					IJ.run(imp, "Multiply...", "value="+dd.rescaleSlope+" stack");
 				if (dd.rescaleIntercept!=0.0)
-					ip.add(dd.rescaleIntercept);
-				imp.setProcessor(ip);
+					IJ.run(imp, "Add...", "value="+dd.rescaleIntercept+" stack");
+				if (imp.getStackSize()>1) {
+				    imp.setSlice(imp.getStackSize()/2);
+					ImageStatistics stats = imp.getRawStatistics();
+					imp.setDisplayRange(stats.min,stats.max);
+				}
 			} else if (fi.fileType==FileInfo.GRAY16_SIGNED) {
-				if (dd.rescaleIntercept!=0.0 && dd.rescaleSlope==1.0)
-					ip.add(dd.rescaleIntercept);
+				if (dd.rescaleIntercept!=0.0 && dd.rescaleSlope==1.0) {
+					double[] coeff = new double[2];
+					coeff[0] = -32768 + dd.rescaleIntercept;
+					coeff[1] = 1.0;
+					imp.getCalibration().setFunction(Calibration.STRAIGHT_LINE, coeff, "Gray Value");
+				}
 			} else if (dd.rescaleIntercept!=0.0 && (dd.rescaleSlope==1.0||fi.fileType==FileInfo.GRAY8)) {
 				double[] coeff = new double[2];
 				coeff[0] = dd.rescaleIntercept;
 				coeff[1] = dd.rescaleSlope;
 				imp.getCalibration().setFunction(Calibration.STRAIGHT_LINE, coeff, "Gray Value");
 			}
+			Macro.setOptions(options);
 			if (dd.windowWidth>0.0) {
 				double min = dd.windowCenter-dd.windowWidth/2;
 				double max = dd.windowCenter+dd.windowWidth/2;
@@ -136,6 +145,7 @@ public class DICOM extends ImagePlus implements PlugIn {
 					min = cal.getRawValue(min);
 					max = cal.getRawValue(max);
 				}
+				ImageProcessor ip = imp.getProcessor();
 				ip.setMinAndMax(min, max);
 				if (IJ.debugMode) IJ.log("window: "+min+"-"+max);
 			}
@@ -236,10 +246,13 @@ class DicomDecoder {
 	private static final int RED_PALETTE = 0x00281201;
 	private static final int GREEN_PALETTE = 0x00281202;
 	private static final int BLUE_PALETTE = 0x00281203;
+	private static final int ACQUISITION_CONTEXT_SEQUENCE = 0x00400555;
+	private static final int VIEW_CODE_SEQUENCE = 0x00540220;
 	private static final int ICON_IMAGE_SEQUENCE = 0x00880200;
 	private static final int ITEM = 0xFFFEE000;
 	private static final int ITEM_DELIMINATION = 0xFFFEE00D;
 	private static final int SEQUENCE_DELIMINATION = 0xFFFEE0DD;
+	private static final int FLOAT_PIXEL_DATA = 0x7FE00008;
 	private static final int PIXEL_DATA = 0x7FE00010;
 
 	private static final int AE=0x4145, AS=0x4153, AT=0x4154, CS=0x4353, DA=0x4441, DS=0x4453, DT=0x4454,
@@ -272,6 +285,7 @@ class DicomDecoder {
 	boolean inSequence;
  	BufferedInputStream inputStream;
  	String modality;
+ 	private boolean acquisitionSequence;
 
 	public DicomDecoder(String directory, String fileName) {
 		this.directory = directory;
@@ -558,7 +572,7 @@ class DicomDecoder {
 			int tag = getNextTag();
 			if ((location&1)!=0) // DICOM tags must be at even locations
 				oddLocations = true;
-			if (inSequence) {
+			if (inSequence && !acquisitionSequence) {
 				addInfo(tag, null);
 				continue;
 			}
@@ -669,6 +683,9 @@ class DicomDecoder {
 					fi.blues = getLut(elementLength);
 					addInfo(tag, elementLength/2);
 					break;
+				case FLOAT_PIXEL_DATA:
+					fi.fileType = FileInfo.GRAY32_FLOAT;
+					// continue without break
 				case PIXEL_DATA:
 					// Start of image data...
 					if (elementLength!=0) {
@@ -866,6 +883,10 @@ class DicomDecoder {
 				break;
 			case SQ:
 				value = "";
+				if (tag==ACQUISITION_CONTEXT_SEQUENCE)
+					acquisitionSequence = true;
+				if (tag==VIEW_CODE_SEQUENCE)
+					acquisitionSequence = false;
 				boolean privateTag = ((tag>>16)&1)!=0;
 				if (tag!=ICON_IMAGE_SEQUENCE && !privateTag)
 					break;
@@ -1687,6 +1708,7 @@ class DicomDictionary {
 		"300C0008=DSStart Cumulative Meterset Weight",
 		"300C0022=ISReferenced Fraction Group Number",
 
+		"7FE00008=OXFloat Pixel Data",
 		"7FE00010=OXPixel Data",
 		
 		"FFFEE000=DLItem",

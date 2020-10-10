@@ -28,26 +28,25 @@ public class EllipseRoi extends PolygonRoi {
 	public EllipseRoi(int sx, int sy, ImagePlus imp) {
 		super(sx, sy, imp);
 		type = FREEROI;
-		xstart = ic.offScreenXD(sx);
-		ystart = ic.offScreenYD(sy);
+		xstart = offScreenXD(sx);
+		ystart = offScreenYD(sy);
 		setDrawOffset(false);
 		bounds = null;
 	}
 
 	public void draw(Graphics g) {
 		super.draw(g);
-		int size2 = HANDLE_SIZE/2;
 		if (!overlay) {
 			for (int i=0; i<handle.length; i++)
-				drawHandle(g, xp2[handle[i]]-size2, yp2[handle[i]]-size2);
+				drawHandle(g, xp2[handle[i]], yp2[handle[i]]);
 		}
 	}
 
 	protected void grow(int sx, int sy) {
 		double x1 = xstart;
 		double y1 = ystart;
-		double x2 = ic.offScreenXD(sx);
-		double y2 = ic.offScreenYD(sy);
+		double x2 = offScreenXD(sx);
+		double y2 = offScreenYD(sy);
 		makeEllipse(x1, y1, x2, y2);
 		imp.draw();
 	}
@@ -150,8 +149,8 @@ public class EllipseRoi extends PolygonRoi {
 	}
 	
 	protected void moveHandle(int sx, int sy) {
-		double ox = ic.offScreenXD(sx); 
-		double oy = ic.offScreenYD(sy);
+		double ox = offScreenXD(sx); 
+		double oy = offScreenYD(sy);
 		double x1 = xpf[handle[2]]+x;
 		double y1 = ypf[handle[2]]+y;
 		double x2 = xpf[handle[0]]+x;
@@ -190,7 +189,7 @@ public class EllipseRoi extends PolygonRoi {
 	}
 	
 	public int isHandle(int sx, int sy) {
-		int size = HANDLE_SIZE+5;
+		int size = getHandleSize()+5;
 		int halfSize = size/2;
 		int index = -1;
 		for (int i=0; i<handle.length; i++) {
@@ -243,13 +242,22 @@ public class EllipseRoi extends PolygonRoi {
 			pw = cal.pixelWidth;
 			ph = cal.pixelHeight;
 		}
+		if (pw != ph)    //the following calculation holds only for pixel aspect ratio == 1 (otherwise different axes in distorted ellipse)
+			return a;
 		double[] p = getParams();
-		double dx = (p[2] - p[0])*pw;
-		double dy = (p[3] - p[1])*ph;
-		double major = Math.sqrt(dx*dx+dy*dy);
+		double dx = p[2] - p[0];  //this is always major axis; aspect ratio p[4] is limited to <= 1
+		double dy = p[3] - p[1];
+		double major = Math.sqrt(dx*dx + dy*dy);
 		double minor = major*p[4];
-		a[0] = major;
-		a[2] = (pw==ph)?minor:a[2];
+		a[0] = major*pw; //Feret from convex hull should be accurate anyhow
+		a[2] = minor*pw; //here our own calculation is better
+		System.arraycopy(p, 0, a, 8, 4);  //MaxFeret endpoints
+		double xCenter = 0.5*(p[2] + p[0]);
+		double yCenter = 0.5*(p[3] + p[1]);
+		double semiMinorX = dy * 0.5 * p[4];
+		double semiMinorY = dx * (-0.5) * p[4];
+		a[12] = xCenter + semiMinorX; a[14] = xCenter - semiMinorX;
+		a[13] = yCenter + semiMinorY; a[15] = yCenter - semiMinorY;
 		return a;
 	}
 	

@@ -40,10 +40,23 @@ public class Thresholder implements PlugIn, Measurements, ItemListener {
 			showLegacyDialog = false;
 		ImagePlus imp = IJ.getImage();
 		if (imp.getStackSize()==1) {
-			Undo.setup(Undo.TRANSFORM, imp);
-			applyThreshold(imp, false);
+			if (!convertToMask && imp.getProcessor().isBinary())
+				setThreshold(imp);
+			else {
+				Undo.setup(Undo.TRANSFORM, imp);
+				applyThreshold(imp, false);
+			}
 		} else
 			convertStack(imp);
+		IJ.showProgress(1.0);
+	}
+	
+	private void setThreshold(ImagePlus imp) {
+		ImageProcessor ip = imp.getProcessor();
+		int threshold = ip.isInvertedLut()?255:0;
+		if (Prefs.blackBackground)
+			threshold = ip.isInvertedLut()?0:255;		
+		ip.setThreshold(threshold, threshold, ImageProcessor.NO_LUT_UPDATE);
 	}
 	
 	void convertStack(ImagePlus imp) {
@@ -112,7 +125,8 @@ public class Thresholder implements PlugIn, Measurements, ItemListener {
 			applyThreshold(imp, oneSlice);
 		Prefs.blackBackground = saveBlackBackground;
 		if (thresholdSet) {
-			imp.getProcessor().resetThreshold();
+			if (imp.getProcessor().getLutUpdateMode()!=ImageProcessor.NO_LUT_UPDATE)
+				imp.getProcessor().resetThreshold();
 			imp.updateAndDraw();
 		}
 	}

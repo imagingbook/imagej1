@@ -10,6 +10,7 @@ import ij.plugin.filter.PlugInFilter;
 import ij.measure.ResultsTable;
 import java.awt.*;
 import java.util.ArrayList;
+import java.awt.geom.Rectangle2D;
 
 /** This plugin implements the commands in the Image/Overlay menu. */
 public class OverlayCommands implements PlugIn {
@@ -196,8 +197,12 @@ public class OverlayCommands implements PlugIn {
 	}
 	
 	private void setPosition(ImagePlus imp, Roi roi) {
-		boolean setPos = defaultRoi.getPosition()!=0;
 		int stackSize = imp.getStackSize();
+		if (roi.hasHyperStackPosition() && imp.isHyperStack())
+			return;
+		if (roi.getPosition()>0 && stackSize>1)
+			return;
+		boolean setPos = defaultRoi.getPosition()!=0;
 		if (setPos && stackSize>1) {
 			if (imp.isHyperStack()||imp.isComposite()) {
 				boolean compositeMode = imp.isComposite() && ((CompositeImage)imp).getMode()==IJ.COMPOSITE;
@@ -360,6 +365,9 @@ public class OverlayCommands implements PlugIn {
 			double strokeWidth = rois[i].getStrokeWidth();
 			int digits = strokeWidth==(int)strokeWidth?0:1;
 			String sWidth = IJ.d2s(strokeWidth,digits);
+			String group = ""+rois[i].getGroup();
+			if (group.equals("0"))
+				group = "none";
 			int position = rois[i].getPosition();
 			int c = rois[i].getCPosition();
 			int z = rois[i].getZPosition();
@@ -367,8 +375,15 @@ public class OverlayCommands implements PlugIn {
 			rt.setValue("Index", i, i);
 			rt.setValue("Name", i, rois[i].getName());
 			rt.setValue("Type", i, rois[i].getTypeAsString());
-			rt.setValue("X", i, r.x);
-			rt.setValue("Y", i, r.y);
+			rt.setValue("Group", i, group);
+			if (rois[i] instanceof PointRoi) {
+				Rectangle2D.Double bounds = rois[i].getFloatBounds();
+				rt.setValue("X", i, (int)Math.round(bounds.x));
+				rt.setValue("Y", i, (int)Math.round(bounds.y));
+			} else {
+				rt.setValue("X", i, r.x);
+				rt.setValue("Y", i, r.y);
+			}
 			rt.setValue("Width", i, r.width);		
 			rt.setValue("Height", i, r.height);		
 			rt.setValue("Points", i, rois[i].size());
@@ -380,7 +395,9 @@ public class OverlayCommands implements PlugIn {
 			rt.setValue("Z", i, z);	
 			rt.setValue("T", i, t);	
 		}
-		rt.show("Overlay Elements");
+		ImagePlus imp = WindowManager.getCurrentImage();
+		String title = imp!=null?" of "+imp.getTitle():"";
+		rt.show("Overlay Elements"+title);//Marcel Boeglin 2019.10.07
 	}
 	
 }
